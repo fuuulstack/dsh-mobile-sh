@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自建中继允许跑在「裸 IP + 明文 http」上（中继侧需 RELAY_ALLOW_INSECURE=true）。
+     Android 从 API 28 起默认禁止明文流量，不放行的话 `http://1.2.3.4:8080` 会在
+     连接建立前就被系统拦掉，表现为「请求失败」而中继日志里一个字都没有。
+     信任锚仍是系统 CA：这里只放开 cleartext，不动证书校验。 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

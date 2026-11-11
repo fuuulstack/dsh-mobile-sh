@@ -1,0 +1,31 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- lucide shield-pen：工作区内修改。盾牌轮廓 + 里面一支笔，和桌面端同一图案。 -->
+    <path
+        android:strokeColor="#4D6BFE"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M20,13c0,5 -3.5,7.5 -7.66,8.95a1,1 0,0 1,-0.67 -0.01C7.5,20.5 4,18 4,13V6a1,1 0,0 1,1 -1c2,0 4.5,-1.2 6.24,-2.72a1.17,1.17 0,0 1,1.52 0C14.51,3.81 17,5 19,5a1,1 0,0 1,1 1z" />
+    <path
+        android:strokeColor="#4D6BFE"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M8.5,11h4" />
+    <path
+        android:strokeColor="#4D6BFE"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M8.5,14.5h2" />
+    <path
+        android:strokeColor="#4D6BFE"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M14.4,15.4 17.2,12.6a1.13,1.13 0,0 1,1.6 1.6L16,16.9l-2.2,0.5z" />
+</vector>

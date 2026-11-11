@@ -1,0 +1,38 @@
+{
+  "name": "dsh-mobile-sh",
+  "version": "0.2.0",
+  "description": "通过自建中继远程使用本机 DSH",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.12.0"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "dist/index.js",
+    "dist/worker.js",
+    "dist/client.js",
+    "dist/NOTICE.txt",
+    "dist/build-info.json",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "THIRD_PARTY_NOTICES.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}

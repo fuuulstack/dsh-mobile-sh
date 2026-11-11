@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  App 图标 = 大飞鱼那张方形插画。
+  背景用同一张图模糊放大后的版本，前景是居中 88% 的原图——两者同源，
+  不论系统套圆形、方圆形还是水滴形遮罩，边缘都不会露出纯色断层。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@mipmap/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

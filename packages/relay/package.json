@@ -1,0 +1,12 @@
+{
+  "name": "@dsh-mobile-sh/relay",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node dist/cli.js serve"
+  },
+  "engines": {
+    "node": ">=24.12.0"
+  }
+}

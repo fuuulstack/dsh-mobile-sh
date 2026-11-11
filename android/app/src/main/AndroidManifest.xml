@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 扫一扫：扫中继网页上的配对二维码（dsh://pair/…），省掉手输地址和 8 位码。
+         uses-feature required=false —— 没有摄像头的设备（部分平板/模拟器）仍然能装，
+         只是「扫一扫」会提示改用输入配对码。 -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- 版本管理（App 内自更新）：安装下载好的 APK 需要「安装未知应用」授权。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <application
+        android:label="@string/appName"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:allowBackup="false"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.DSHMobileV2"
+        android:networkSecurityConfig="@xml/network_security_config">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- 浏览器/微信里点开 dsh://pair/... 直达配对流程（v1 同款契约） -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="dsh" android:host="pair" />
+            </intent-filter>
+        </activity>
+
+        <!-- 拍照附件：系统相机 App 要往我们的目录里写一张照片，只能给它一个
+             content:// 授权地址（file:// 从 Android 7 起会被 StrictMode 拦）。
+             只暴露 cacheDir/captures 一个子目录，其余文件概不外露。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- 版本管理：把外部缓存 updates/ 里的安装包交给系统安装器
+             （ApkProvider 只开这一个目录，v1 同款）。 -->
+        <provider
+            android:name=".ApkProvider"
+            android:authorities="${applicationId}.apkprovider"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+    </application>
+</manifest>

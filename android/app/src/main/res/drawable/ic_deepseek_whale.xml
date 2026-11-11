@@ -1,0 +1,33 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- DeepSeek 鲸鱼背景圆底 (主色 8% 或全色) -->
+    <path
+        android:fillColor="#144D6BFE"
+        android:pathData="M48,0A48,48 0,1 1,0 48,48 48,0 0,1 48,0Z" />
+    <!-- DeepSeek 标志性蓝色鲸鱼造型 -->
+    <path
+        android:fillColor="#4D6BFE"
+        android:pathData="M24,52 C24,38 36,30 52,30 C64,30 72,36 78,42 C82,40 86,37 88,34 C88,40 85,46 80,50 C80,56 75,64 64,68 C52,72 38,70 30,64 C26,61 24,56 24,52 Z" />
+    <!-- 鲸鱼尾鳍 -->
+    <path
+        android:fillColor="#4D6BFE"
+        android:pathData="M78,42 C82,46 85,52 86,56 C82,54 78,52 75,51 Z" />
+    <!-- 鲸鱼胸鳍 -->
+    <path
+        android:fillColor="#3A50D9"
+        android:pathData="M42,54 C46,60 52,64 58,63 C55,59 50,56 46,54 Z" />
+    <!-- 鲸鱼眼睛 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,44 A2.5,2.5 0,1 0,34 49 A2.5,2.5 0,1 0,34 44 Z" />
+    <!-- 鲸鱼喷出水花点缀 -->
+    <path
+        android:fillColor="#7B90FF"
+        android:pathData="M44,24 A3,3 0,1 0,44 18 A3,3 0,1 0,44 24 Z" />
+    <path
+        android:fillColor="#7B90FF"
+        android:pathData="M52,20 A2,2 0,1 0,52 16 A2,2 0,1 0,52 20 Z" />
+</vector>

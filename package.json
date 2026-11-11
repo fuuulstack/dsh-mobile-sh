@@ -1,0 +1,34 @@
+{
+  "name": "dsh-mobile-sh-workspace",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24.12.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
+    "check": "npm run typecheck && node scripts/check-naming.mjs && npm test && npm run build",
+    "start": "node packages/relay/dist/cli.js serve",
+    "admin": "tsx packages/relay/src/cli.ts"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5",
+    "qrcode": "1.5.4",
+    "ws": "8.22.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.25.12",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

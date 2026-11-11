@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 仅 debug 构建：额外信任本地联调自签 CA（artifacts/android-fixture.p12 的公钥），
+     用于 scripts/local-e2e.ts 的 TLS 前置（https://localhost:8443，经 adb reverse 映射）。
+     release 构建不含本文件，信任链不受影响。
+
+     注意：debug 变体里的同名文件会**整体替换** main 的那份，所以这里必须把 main 的
+     明文放行也带上——否则 debug 包装上裸 IP 中继（http://1.2.3.4:8080）会连不上。 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="@raw/test_ca"/>
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

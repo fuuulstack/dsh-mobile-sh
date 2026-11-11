@@ -1,0 +1,99 @@
+# 中继服务的 compose 部署。
+#
+# 一行起服务（只有 RELAY_PASSWORD 是必填）：
+#
+#   RELAY_PASSWORD='一个强密码' docker compose -f deploy/compose.yaml up -d
+#
+# 然后 `docker logs <容器>` 末尾会打印中继地址与账号信息；登录账户页
+# （`http://<机器>:8080/`）→「手机登录配对码」生成 8 位码，或直接扫码。
+#
+# 可选参数（容量、端口、TOTP、固定域名、指标令牌）全部列在下面并有默认值；
+# 完整变量表见 deploy/README.md 与 packages/relay/src/server.ts 的 configFromEnv 注释。
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ${DSH_MOBILE_SH_RELAY_IMAGE:-dsh-mobile-sh-relay:0.3.0}
+    restart: unless-stopped
+    # tini 当 PID 1：转发 SIGTERM/SIGINT 并回收僵尸进程，`docker stop` 才能在
+    # 超时前干净退出（少了它，node 直接当 PID 1 也能走，但信号语义依赖运行时）。
+    init: true
+    environment:
+      # ── 唯一必填项 ────────────────────────────────────────────────────────
+      # 这一个密码同时是：网页登录密码 + 主机注册（插件设置页）密码。
+      # 默认账号 admin@relay.local；要换邮箱显式给 RELAY_ADMIN_EMAIL。
+      # 换掉密码后旧密码不会失效在「已登录的浏览器」上，但会立刻影响新登录。
+      RELAY_PASSWORD: ${RELAY_PASSWORD:?Set RELAY_PASSWORD, e.g. RELAY_PASSWORD='a-long-secret'}
+
+      # ── 可选：对外形态 ────────────────────────────────────────────────────
+      # 钉住对外地址（`https://relay.example.com` 或 `http://203.0.113.7:8080`）。
+      # 不配也行：绝对链接（配对二维码、手机深链）按请求的 Host 与
+      # X-Forwarded-Proto 现推。配了的好处是 Origin 校验可以严格相等，并且
+      # 子域路由需要它。**配错比不配更糟**（二维码会指到错地址），拿不准就留空。
+      RELAY_BASE_URL: ${RELAY_BASE_URL:-}
+      # 允许 http:// 明文对外。只有 RELAY_BASE_URL 写成 http 时才需要，且必须显式
+      # 打开——令牌与归档正文在明文链路上裸奔不能是默认行为。loopback 永远放行。
+      RELAY_ALLOW_INSECURE: ${RELAY_ALLOW_INSECURE:-false}
+      # auto | subdomain | path。auto 按 RELAY_BASE_URL 的主机名判断（IP 字面量 →
+      # path，域名 → subdomain）。**没配 RELAY_BASE_URL 时恒为 path**：连自己叫什么
+      # 都不知道，拼不出 `<hostId>.<域名>`。裸 IP 部署也只能是 path。
+      RELAY_HOST_ROUTING: ${RELAY_HOST_ROUTING:-auto}
+      # 只信任声明出来的反代：写成 nginx 的地址（如 127.0.0.1）后，除它以外的来源
+      # 一律 403 · untrusted-proxy。**直连部署留空即可**——没声明反代时中继按真实
+      # socket 地址算限流键，也不会去采信可伪造的 X-Forwarded-For。
+      # 只有在「反代地址无法固定」（例如 NAT 后、地址每次都变）时才写 `*`：那等于
+      # 完全采信 XFF，按 IP 的限流就只是兜底，真正的防护是密码。
+      RELAY_TRUSTED_PROXY: ${RELAY_TRUSTED_PROXY:-}
+      # 网页登录是否强制 TOTP。**配了 RELAY_PASSWORD 时默认关闭**——要让用户先装
+      # 验证器 App 才肯起服务，「一行命令」就不成立了。显式写 true 可打开，首次建号
+      # 时 secret 会打到 `docker logs`（只打一次）。
+      RELAY_REQUIRE_TOTP: ${RELAY_REQUIRE_TOTP:-}
+
+      # ── 可选：容量（按机器规格调；不填等于 768MiB 的标定值） ──────────────
+      # 内存：同时决定容器 mem_limit 与中继自己的字节预算（预留/连接缓冲/单请求体）。
+      RELAY_MEMORY_MB: ${RELAY_MEMORY_MB:-768}
+      # 最多允许几台电脑同时挂在这个中继上。条数不随内存自动缩——4GB 的机器也
+      # 不会想挂 150 台。默认 32。
+      RELAY_MAX_HOSTS: ${RELAY_MAX_HOSTS:-32}
+      # 同时进行的隧道流（HTTP 请求 + WS）上限。线格式只认 64，写更大不会更宽。
+      RELAY_MAX_STREAMS: ${RELAY_MAX_STREAMS:-64}
+      # 单个请求体上限（MiB）。附件上传会走这里，太小会让发图失败。
+      RELAY_MAX_BODY_MB: ${RELAY_MAX_BODY_MB:-300}
+      # 容器本地时间（只影响账户页上的时间显示与日志，不影响令牌有效期）。
+      TZ: ${TZ:-UTC}
+
+      # ── 可选：运维 ───────────────────────────────────────────────────────
+      # /metrics 的 bearer。留空则 /metrics 一律 401（fail-closed），其余功能不受影响。
+      # 生成：openssl rand -base64 32 | tr '/+' '_-' | tr -d '='
+      RELAY_METRICS_TOKEN: ${RELAY_METRICS_TOKEN:-}
+
+      # ── 可选：高级（一般不需要动） ────────────────────────────────────────
+      # 想拆开「登录密码」和「主机注册密码」时用这两对；给了就以显式值为准。
+      # RELAY_ADMIN_EMAIL: ${RELAY_ADMIN_EMAIL:-}
+      # RELAY_ADMIN_PASSWORD: ${RELAY_ADMIN_PASSWORD:-}
+      # RELAY_ENROLL_PASSWORD: ${RELAY_ENROLL_PASSWORD:-}
+      # RELAY_ENROLL_ACCOUNT: ${RELAY_ENROLL_ACCOUNT:-}
+      # 归档回填的紧急开关（生产上发现迁移把机器压死时用）：off 直接跳过。
+      # RELAY_BACKFILL: ${RELAY_BACKFILL:-}
+    ports:
+      # 对外端口 → 容器内 8080。绑 0.0.0.0 才能被外部访问；只想本机反代就设
+      # RELAY_PORT=127.0.0.1:8088（此时同时把 RELAY_TRUSTED_PROXY 设成反代地址）。
+      - "${RELAY_PORT:-8080}:8080"
+    volumes:
+      # 密钥与 SQLite 都在 /data：不挂这个卷，容器一重建账号与主机授权就全没了。
+      # 备份 = `docker run --rm -v relay-data:/data alpine tar czf - -C /data . > backup.tgz`。
+      - relay-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # mem_limit 跟着 RELAY_MEMORY_MB 走：容器限额与中继自己的预算用同一个数字，
+    # 免得出现「预算按 768MiB 算、cgroup 只给 600MiB」这种自相矛盾的配置。
+    mem_limit: ${RELAY_MEMORY_MB:-768}m
+    pids_limit: 128
+volumes:
+  relay-data:

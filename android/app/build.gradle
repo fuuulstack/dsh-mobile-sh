@@ -1,0 +1,121 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
+    id 'org.jetbrains.kotlin.plugin.serialization'
+    // Room 的注解处理器走 KSP（Kotlin 2.x 下 kapt 已被官方建议让位）。
+    id 'com.google.devtools.ksp'
+}
+
+android {
+    namespace providers.gradleProperty('v2.applicationId').get()
+    compileSdk 35
+
+    defaultConfig {
+        applicationId providers.gradleProperty('v2.applicationId').get()
+        minSdk 26
+        targetSdk 35
+        versionCode 61
+        versionName '0.2.60'
+        // 应用显示名由 gradle.properties 提供（当前为 BBW）
+        resValue 'string', 'appName', providers.gradleProperty('v2.appName').get()
+        // build_hash：三端握手时互报。版本号相同但内容不同（见 AGENTS.md §31 的
+        // 「同版本号重打包」陷阱）时，靠它在设置页看出「插件跑的还是旧包」。
+        def gitHash = 'nogit'
+        try {
+            gitHash = ['git', 'rev-parse', '--short', 'HEAD']
+                .execute(null, rootProject.projectDir.parentFile).text.trim()
+        } catch (ignored) {
+        }
+        buildConfigField 'String', 'BUILD_HASH', "\"${gitHash ?: 'nogit'}\""
+        // 静态回落的更新清单地址：默认 RFC 2606 保留域（不可达＝「未配置静态回落」）。
+        // 真实部署用 -PreleaseFallbackManifestUrl=<url> 注入，别把地址写回仓库。
+        buildConfigField 'String', 'RELEASE_FALLBACK_MANIFEST_URL',
+                "\"${providers.gradleProperty('releaseFallbackManifestUrl').orElse('https://downloads.example.test/api/ybs/downloads/version.json').get()}\""
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+    // 签名：release 默认回落到本机 debug keystore；正式发版须注入
+    // ANDROID_KEYSTORE / _PASSWORD / KEY_ALIAS / KEY_PASSWORD 四件套（见 AGENTS.md），
+    // 并用 apksigner verify --print-certs 核对线上包指纹后再发布。
+    signingConfigs {
+        if (System.getenv('ANDROID_KEYSTORE')) {
+            production {
+                storeFile file(System.getenv('ANDROID_KEYSTORE'))
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig System.getenv('ANDROID_KEYSTORE') ? signingConfigs.production : signingConfigs.debug
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    buildFeatures {
+        compose true
+        buildConfig true
+    }
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+    // Room 的 schema 输出目录：改实体时生成的 JSON 要入库，迁移才有据可依。
+    ksp {
+        arg('room.schemaLocation', "$projectDir/schemas")
+        arg('room.incremental', 'true')
+    }
+}
+
+dependencies {
+    // Compose BOM 对齐版本；2025.10.01 → ui 1.9.4 / material3 1.4.0（aliyun 镜像实测可达）。
+    //
+    // 为什么要抬到 material3 1.4：抽屉正文里上下滑会把抽屉收起（或收起一半）。1.3.x 的
+    // `ModalBottomSheet` 把 `anchoredDraggable` 挂在抽屉 Surface 上，没有关掉的开关。
+    // 两个 aar 里 grep `sheetGesturesEnabled`：1.3.2 零命中，1.4.0 命中 `ModalBottomSheetKt`
+    // （javap 签名 `…, float sheetMaxWidth, boolean sheetGesturesEnabled, Shape, …`）。
+    // 指针层「就地消费」试过两轮都不成立（见 docs/pitfalls.md 坑 89），只剩这个官方开关。
+    def composeBom = platform('androidx.compose:compose-bom:2025.10.01')
+    implementation composeBom
+    implementation 'androidx.activity:activity-compose:1.9.3'
+    implementation 'androidx.core:core-ktx:1.15.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.8.7'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7'
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-tooling-preview'
+    implementation 'androidx.compose.foundation:foundation'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.material:material-icons-extended'
+    debugImplementation 'androidx.compose.ui:ui-tooling'
+    // 网络栈与 v1 相同（okhttp 4.12.0 在本地 Gradle 缓存已有）
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3'
+    // 附件缩略图：相册/拍照/文件三条路都经 ContentResolver 取流，
+    // 统一在后台线程解码成 Bitmap 给 Compose 显示
+    implementation 'androidx.compose.ui:ui-graphics'
+    implementation 'androidx.exifinterface:exifinterface:1.3.7'
+    // 扫码：zxing 纯解码器（core 3.5.3 与 v1 同款，本地 Gradle 缓存已有；
+    // 不引 CameraX/ML Kit——体积与 GMS 依赖都不划算，Camera2 由扫码页自管）
+    implementation 'com.google.zxing:core:3.5.3'
+    // v2 数据层：Room 存时间线、Paging 按需加载、immutable 列表做结构共享。
+    // 版本钉死在已实测可下载的坐标（dl.google.com / repo1 均 200）。
+    def roomVersion = '2.6.1'
+    implementation "androidx.room:room-runtime:$roomVersion"
+    implementation "androidx.room:room-ktx:$roomVersion"
+    ksp "androidx.room:room-compiler:$roomVersion"
+    implementation 'androidx.paging:paging-runtime:3.3.6'
+    implementation 'androidx.paging:paging-compose:3.3.6'
+    implementation 'org.jetbrains.kotlinx:kotlinx-collections-immutable:0.3.8'
+    testImplementation "androidx.room:room-testing:$roomVersion"
+    testImplementation 'junit:junit:4.13.2'
+    // 单测里的真实 SQLite（Room 的 JVM 测试要么用 Robolectric，要么给它一个
+    // 真的 JDBC 连接）。用 xerial 的嵌入式实现，避免引入整套 Robolectric。
+    testImplementation 'org.xerial:sqlite-jdbc:3.47.1.0'
+}

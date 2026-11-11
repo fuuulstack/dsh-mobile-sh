@@ -1,0 +1,22 @@
+pluginManagement {
+    repositories {
+        // aliyun gradle-plugin 镜像已实测含 Kotlin 2.1.0 的 android/compose 插件坐标；
+        // 插件解析走这里最快，google()/gradlePluginPortal() 作回退（国内网络可达性不稳）。
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+// PREFER_SETTINGS：让机器级 init 脚本注入的镜像仓库与本文件共存（FAIL_ON_PROJECT_REPOS
+// 会直接构建失败）；同时本文件声明的仓库仍然优先。
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+    repositories {
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = 'DSHMobileV2'
+include ':app'

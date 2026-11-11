@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  拍照附件的可写目录。
+
+  只放 cacheDir/captures：相机 App 需要一个可写的 content:// 目标，
+  而 FileProvider 的路径白名单决定它能碰到哪些文件。这里给的是缓存里的
+  临时目录，拍完就读回来压缩，原图随缓存自然回收。
+-->
+<paths>
+    <cache-path name="captures" path="captures/" />
+</paths>

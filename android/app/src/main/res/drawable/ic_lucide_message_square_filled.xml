@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- lucide message-square 的实心版：选中的「会话」。
+         闭合路径 + evenOdd，让开口的气泡尾巴也能填满，不出现细缝。 -->
+    <path android:fillColor="#FF000000" android:fillType="evenOdd"
+        android:pathData="M21,15a2,2 0,0 1,-2 2H7l-4 4V5a2,2 0,0 1,2 -2h14a2,2 0,0 1,2 2z" />
+</vector>

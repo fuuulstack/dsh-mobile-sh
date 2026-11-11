@@ -1,0 +1,20 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 双下箭头：ic_lucide_chevron_down 单条约占 viewport 的 1/4，
+         叠两条才够「跳到底部」的份量，也贴合参考稿的形状。 -->
+    <path
+        android:pathData="M6,4 L12,10 L18,4"
+        android:strokeColor="#18191B"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M6,12 L12,18 L18,12"
+        android:strokeColor="#18191B"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

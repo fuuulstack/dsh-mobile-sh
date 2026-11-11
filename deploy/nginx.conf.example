@@ -1,0 +1,79 @@
+# Place the map, the gzip window and the limit_req zone in the nginx http context.
+# Certificates must cover relay.example.com and *.relay.example.com (DNS-01).
+#
+# 两种主机路由形态都走这份配置，区别只在 server_name 与证书：
+#   · 子域（域名部署缺省）：主机挂在 `<hostId>.relay.example.com`，证书必须带通配。
+#   · 路径（RELAY_HOST_ROUTING=path）：主机挂在 `relay.example.com/h/<hostId>/…`，
+#     **不需要通配证书**，把 server_name 里的 `*.relay.example.com` 删掉即可。
+# 中继按 RELAY_BASE_URL 的主机名自动选形态（域名→子域，IP 字面量→路径），
+# 这里不用额外开关。裸 IP 部署完全不经过 nginx（见 deploy/README.md）。
+#
+# 中继可以**不配** RELAY_BASE_URL：此时配对二维码与 dsh:// 深链的地址按每次请求的
+# Host + X-Forwarded-Proto 现推。所以下面这两行 `proxy_set_header` 是功能性的，
+# 不只是审计信息——把 Host 改成 localhost 会让手机扫到一个连不上的地址。
+#
+# gzip: chat traffic is repetitive JSON text and compresses 3-5x, which matters
+# on a metered uplink. Only applied to responses the relay marks cache-control
+# no-store AND that we know are JSON (sync/rpc answers); SSE-upgraded paths are
+# never buffered so compression cannot delay the event stream.
+map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+limit_req_zone $binary_remote_addr zone=relay_login:10m rate=10r/m;
+gzip on;
+gzip_comp_level 5;
+gzip_min_length 1024;
+gzip_proxied no-store no-cache;
+gzip_types application/json;
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name relay.example.com *.relay.example.com;
+    ssl_certificate /etc/letsencrypt/live/relay.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/relay.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    # Long-lived paired hosts: a MITM strip of HSTS would otherwise only need one
+    # cleartext window to hijack a bearer.
+    add_header Strict-Transport-Security "max-age=63072000" always;
+    client_max_body_size 320m;
+    # Log the path without query; never log Authorization, Cookie or bodies.
+    access_log off;
+    location / {
+        proxy_pass http://127.0.0.1:8088;
+        proxy_http_version 1.1;
+        # Host 原样透传：未钉地址时二维码/深链的地址就是它。
+        proxy_set_header Host $host;
+        # 也决定 cookie 的 Secure 与 __Host- 前缀——漏了它，https 站点上登录成功
+        # 也会被浏览器把 Set-Cookie 整条丢掉（表现为弹回登录页）。
+        proxy_set_header X-Forwarded-Proto https;
+        # Overwrite, never append: the relay charges rate limits to the last XFF
+        # entry, so a client-supplied header must not survive to be counted.
+        # 同时把 RELAY_TRUSTED_PROXY 设成 127.0.0.1（compose 里 8088 只绑本机），
+        # 中继才会读这个头；直连部署则写 `*`。
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+    location = /login {
+        limit_req zone=relay_login burst=5 nodelay;
+        proxy_pass http://127.0.0.1:8088;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $remote_addr;
+    }
+    location = /native/v1/login {
+        limit_req zone=relay_login burst=5 nodelay;
+        proxy_pass http://127.0.0.1:8088;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $remote_addr;
+    }
+}

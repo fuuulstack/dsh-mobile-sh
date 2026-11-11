@@ -1,0 +1,43 @@
+node_modules/
+packages/*/dist/
+coverage/
+data/
+# Android 源码包 com.dsh.mobile.v2.data 不能被上面的 data/ 目录规则误伤
+!android/app/src/main/java/com/dsh/mobile/v2/data/
+!android/app/src/test/java/com/dsh/mobile/v2/data/
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.tgz
+*.key
+*.pem
+!android/app/src/debug/res/raw/test_ca.pem
+android/.gradle/
+android/**/build/
+android/local.properties
+android/.kotlin/
+artifacts/
+# 本地 AI 助手的工作记忆，不进仓库
+.workbuddy-ai/
+.deja/
+*.p12
+*.jks
+*.keystore
+
+# macOS
+.DS_Store
+keys
+.zcode/
+
+# 本地工具产物
+# .dsh-worktrees/：任务看板的 Git Worktree 隔离目录，里面是整份源码副本，
+#   提交进来等于仓库套仓库。分支和提交本来就在 git 里，不靠这份副本保命。
+# .mobilewright-cli/：真机/模拟器的屏幕快照与视频。
+.dsh-worktrees/
+.mobilewright-cli/
+
+# Android 本地构建产物（wrapper jar 按 Gradle 官方惯例保留提交）
+android/app/.cxx/

@@ -1,0 +1,10 @@
+- insert:
+    # id 是 profile patch 合并时的唯一键；若本机仍保留旧版插件，先卸载旧版再安装，
+    # 避免相同 provide/key 产生两个实例。
+    # relayUrl 走环境变量是本地联调便利项；DSH 的 patch 组装不执行 !!js 表达式，
+    # 生产/验收一律在 profile 的 cordis.patch.yml 里写死 relayUrl（同 id 覆盖本段 config）。
+    - id: mobile-sh
+      name: dsh-mobile-sh
+      config:
+        relayUrl: ''
+        enabled: true

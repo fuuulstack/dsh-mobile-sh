@@ -1,0 +1,9 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- lucide message-square（描边）：未选中的「会话」。
+         圆角矩形气泡比圆形气泡在 22dp 下更不容易糊成一团，实心版也还有气泡尾巴。 -->
+    <path android:strokeColor="#FF000000" android:strokeWidth="2"
+        android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="@android:color/transparent"
+        android:pathData="M21,15a2,2 0,0 1,-2 2H7l-4 4V5a2,2 0,0 1,2 -2h14a2,2 0,0 1,2 2z" />
+</vector>

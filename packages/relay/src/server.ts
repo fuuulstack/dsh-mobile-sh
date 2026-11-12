@@ -1,4 +1,5 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
+import { DatabaseSync } from 'node:sqlite';
 import { createReadStream, readFileSync, mkdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
@@ -14,6 +15,7 @@ import { capacityFromEnv, describeCapacity } from './limits.js';
 import {
   isValidVersion, manifestOf, normalizeNotes, publishedAtOf, releaseFileName,
   RELEASE_KEEP_DEFAULT, RELEASE_LATEST_ALIAS, RELEASE_MAX_MB_DEFAULT, RELEASE_PREFIX,
+  CHATGPT_RELEASE_PREFIX, releasePrefix, type ReleaseClient,
 } from './release.js';
 import { ChangeBus, streamChanges, type Change } from './changes.js';
 import { SyncStats } from './sync-stats.js';
@@ -353,7 +355,7 @@ export class Relay {
       // Rewriting `req.url` here (rather than teaching Proxy a second mode) keeps the
       // relay a pure router — it never learns what a pulse or a record looks like.
       const control=/^\/native\/v2\/hosts\/([a-f0-9]{32})\/control$/.exec(req.url??'');
-      if(host==='account'&&control){this.nativeOnly(req);const id=control[1]!,s=this.store.session(this.bearer(req),'native',id);req.url=CONTROL_PATH;void this.proxy.upgrade(req,socket,head,id,s,true).catch(e=>rejectSocket(socket,e instanceof HttpError?e.status:502));}
+      if(host==='account'&&control){this.nativeOnly(req);const id=control[1]!,s=this.store.session(this.bearer(req),'native',id);this.store.assertClientHost(s,id,this.clientType(req));req.url=CONTROL_PATH;void this.proxy.upgrade(req,socket,head,id,s,true).catch(e=>rejectSocket(socket,e instanceof HttpError?e.status:502));}
       else if(host==='account'&&req.url==='/tunnel')this.proxy.acceptTunnel(req,socket,head);
       else if(host!=='account'){const s=this.store.session(cookies(req)[this.ck('relay-host',req)]??'','host',host);void this.proxy.upgrade(req,socket,head,host,s).catch(e=>rejectSocket(socket,e instanceof HttpError?e.status:502));}
       else rejectSocket(socket,404);
@@ -612,17 +614,20 @@ export class Relay {
    */
   private async controlRelease(req:IncomingMessage,res:ServerResponse,url:URL,method:string){
     const host=this.releaseHost(req,url);
+    const client:ReleaseClient=host.client_type==='chatgpt'?'chatgpt':'dsh';
+    if(url.searchParams.has('clientType')&&url.searchParams.get('clientType')!==client)throw new HttpError(403,'release-client-mismatch');
+    const dir=client==='chatgpt'?join(this.releaseDir,'chatgpt'):this.releaseDir;
     const json=(value:unknown)=>{res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(value));};
-    const base=this.originOf(req)+RELEASE_PREFIX;
+    const base=this.originOf(req)+releasePrefix(client);
     if(method==='GET'){
-      json({items:this.store.releaseList(50).map(r=>manifestOf(r,base)),keep:this.releaseKeep,prefix:base});
+      json({items:this.store.releaseList(50,client).map(r=>manifestOf(r,base,client)),keep:this.releaseKeep,prefix:base,clientType:client});
       return;
     }
     if(method==='DELETE'){
       const version=(url.searchParams.get('version')??'').trim();
       if(!isValidVersion(version))throw new HttpError(400,'release-version');
-      this.store.releaseDelete(version);
-      try{unlinkSync(join(this.releaseDir,releaseFileName(version)));}catch{}
+      this.store.releaseDelete(version,client);
+      try{unlinkSync(join(dir,releaseFileName(version,client)));}catch{}
       json({ok:true,version});return;
     }
     if(method!=='POST')throw new HttpError(405,'method');
@@ -640,9 +645,9 @@ export class Relay {
     // 不一致说明传输被截断（或者两个文件根本不是同一个）。不声明也接受。
     const claimed=(req.headers['x-content-sha256']??'').toString().trim().toLowerCase();
     if(claimed&&claimed!==sha256)throw new HttpError(400,'release-sha256-mismatch');
-    mkdirSync(this.releaseDir,{recursive:true});
-    const fileName=releaseFileName(version);
-    const target=join(this.releaseDir,fileName);
+    mkdirSync(dir,{recursive:true});
+    const fileName=releaseFileName(version,client);
+    const target=join(dir,fileName);
     // 先写 .tmp 再 rename：中途被杀不会在卷上留一个「看着能下、装上就崩」的残包。
     writeFileSync(`${target}.tmp`,payload,{mode:0o644});
     renameSync(`${target}.tmp`,target);
@@ -651,9 +656,9 @@ export class Relay {
       version,file_name:fileName,byte_size:payload.length,sha256,notes,
       min_supported:minSupported,published_at:publishedAt,
       account_id:(host.account_id as string)??null,
-    });
-    const pruned=this.store.releaseTrim(this.releaseKeep);
-    for(const v of pruned){try{unlinkSync(join(this.releaseDir,releaseFileName(v)));}catch{}}
+    },client);
+    const pruned=this.store.releaseTrim(this.releaseKeep,client);
+    for(const v of pruned){try{unlinkSync(join(dir,releaseFileName(v,client)));}catch{}}
     json({
       ok:true,version,size:payload.length,sha256,publishedAt,
       url:`${base}/${fileName}`,manifest:`${base}/version.json`,pruned,
@@ -666,19 +671,21 @@ export class Relay {
    * <p>支持 Range：手机的更新器就是按 Range 续传的（`RelayApi.rawBytes` 分块落盘），
    * 一批 200 MB 的家宽链路上断一次就得从头下，体验上等于「更新失败」。
    */
-  private serveRelease(req:IncomingMessage,res:ServerResponse,path:string){
-    const name=path.slice(RELEASE_PREFIX.length+1);
+  private serveRelease(req:IncomingMessage,res:ServerResponse,path:string,client:ReleaseClient='dsh'){
+    const prefix=releasePrefix(client);
+    const dir=client==='chatgpt'?join(this.releaseDir,'chatgpt'):this.releaseDir;
+    const name=path.slice(prefix.length+1);
     if(name==='version.json'){
-      const latest=this.store.releaseLatest();
+      const latest=this.store.releaseLatest(client);
       if(!latest){res.writeHead(404,{'content-type':'application/json','cache-control':'no-store'});res.end('{"error":"release-missing"}');return;}
       res.writeHead(200,{'content-type':'application/json; charset=utf-8','cache-control':'no-store'});
-      res.end(JSON.stringify(manifestOf(latest,this.originOf(req)+RELEASE_PREFIX)));return;
+      res.end(JSON.stringify(manifestOf(latest,this.originOf(req)+prefix,client)));return;
     }
     const row=name===RELEASE_LATEST_ALIAS
-      ?this.store.releaseLatest()
-      :this.store.get('SELECT * FROM releases WHERE file_name=?',name);
+      ?this.store.releaseLatest(client)
+      :this.store.releaseByFile(name,client);
     if(!row){res.writeHead(404,{'content-type':'application/json','cache-control':'no-store'});res.end('{"error":"release-missing"}');return;}
-    const file=join(this.releaseDir,String(row.file_name));
+    const file=join(dir,String(row.file_name));
     let size:number;
     try{size=statSync(file).size;}
     catch{res.writeHead(404,{'content-type':'application/json','cache-control':'no-store'});res.end('{"error":"release-file-missing"}');return;}
@@ -687,7 +694,7 @@ export class Relay {
     const start=range?range.start:0,end=range?range.end:size-1;
     // 只有「从头开始的那次请求」记一次下载：续传的 206 会再来好几趟，按请求计数会把
     // 一次安装数成七八次。
-    if(start===0)this.store.releaseCountDownload(String(row.version));
+    if(start===0)this.store.releaseCountDownload(String(row.version),client);
     // 安装包内容不可变（同名重传会换 sha256，清单随之更新），所以可以放心让中间层
     // 缓存几百秒：手机断网重试时少打一次中继。
     res.writeHead(range?206:200,{
@@ -702,6 +709,11 @@ export class Relay {
     stream.pipe(res);
   }
   private bearer(req:IncomingMessage){const token=/^Bearer ([^\s\u0000-\u001f\u007f]{1,512})$/.exec(req.headers.authorization??'')?.[1];if(!token)throw new HttpError(401,'bearer-required');return token;}
+  private clientType(req:IncomingMessage):'dsh'|'chatgpt'{
+    const value=req.headers['x-client-type']??'dsh';
+    if(value!=='dsh'&&value!=='chatgpt')throw new HttpError(400,'invalid-client-type');
+    return value;
+  }
   private account(req:IncomingMessage){return this.store.session(cookies(req)[this.ck('relay-account',req)]??'','account');}
   private csrf(req:IncomingMessage,s:Row,b:Record<string,string>,recent=false){this.originCheck(req);this.store.csrf(s,b.csrf??'',recent);}
   private refreshCsrf(s:Row){const csrf=secret();this.store.run('UPDATE sessions SET csrf_hash=? WHERE id_hash=?',hash(csrf),s.id_hash);return csrf;}
@@ -738,6 +750,7 @@ export class Relay {
     // 所以这里不能要求任何凭据；能公开的代价只是「谁能访问中继谁就能下安装包」。
     // 上传走 /control/release，那里才要主机凭据。
     if(path.startsWith(RELEASE_PREFIX+'/')&&method==='GET'){this.serveRelease(req,res,path);return;}
+    if(path.startsWith(CHATGPT_RELEASE_PREFIX+'/')&&method==='GET'){this.serveRelease(req,res,path,'chatgpt');return;}
     if(path==='/metrics'&&method==='GET'){
       // Ops surface for a protected management plane: host liveness, capacity and audit health.
       // Not exposed on account/host subdomains and not part of the phone contract.
@@ -792,7 +805,7 @@ export class Relay {
       this.store.rate('enroll:global',100,3600000);this.store.rate('enroll:ip:'+this.ip(req),10,3600000);
       // 凭据不再锁 43 位：允许部署方自定义长度（见 bearer() 的注释）。
       const token=/^Bearer ([^\s\u0000-\u001f\u007f]{1,512})$/.exec(req.headers.authorization??'')?.[1];if(!token)throw new HttpError(403,'enroll-rejected');
-      const b=z.strictObject({operationId:z.string().regex(/^[a-f0-9]{32}$/),hostPublicId:z.string().regex(/^[a-f0-9]{32}$/),hostTunnelToken:z.string().regex(/^[A-Za-z0-9_-]{43}$/),alias:z.string().min(1).max(80),platform:z.string().max(32).optional()}).parse(await body(req));
+      const b=z.strictObject({operationId:z.string().regex(/^[a-f0-9]{32}$/),hostPublicId:z.string().regex(/^[a-f0-9]{32}$/),hostTunnelToken:z.string().regex(/^[A-Za-z0-9_-]{43}$/),alias:z.string().min(1).max(80),platform:z.string().max(32).optional(),clientType:z.enum(['dsh','chatgpt']).optional()}).parse(await body(req));
       const invitation=this.store.get('SELECT account_id FROM invitations WHERE hash=?',hash(token));if(invitation)this.store.rate('enroll:account:'+invitation.account_id,10,3600000);
       // 两条注册路径，凭据二选一：
       // ① 一次性邀请（中继网页签发，5 分钟、用后即焚）；
@@ -808,6 +821,11 @@ export class Relay {
         res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(result));return;
       }
       const result=this.store.enroll(token,b);res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(result));return;
+    }
+    if(path==='/control/identify'&&method==='POST'){
+      const b=z.strictObject({hostId:z.string().regex(/^[a-f0-9]{32}$/),clientType:z.enum(['dsh','chatgpt'])}).parse(await body(req));
+      this.store.identifyClient(b.hostId,this.bearer(req),b.clientType);
+      res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});res.end('{"ok":true}');return;
     }
     if(path==='/control/pair'&&method==='POST'){
       // 主机自助签发「一码配齐」：设备登录码 + 主机配对码一次下发。
@@ -1082,6 +1100,9 @@ export class Relay {
     const s=path==='/native/v2/rotate'&&method==='POST'
       ?this.store.session(this.bearer(req),'native',undefined,{expiredOk:true})
       :this.store.session(this.bearer(req),'native');
+    const clientType=this.clientType(req);
+    const scopedHost=/^\/native\/v2\/hosts\/([a-f0-9]{32})(?:\/|$)/.exec(path);
+    if(scopedHost)this.store.assertClientHost(s,scopedHost[1]!,clientType);
     if(path==='/native/v2/rotate'&&method==='POST'){
       // The old bearer is revoked inside; the caller must persist the new one before the next request.
       const token=this.store.rotateNative(s);json({token,expiresIn:NATIVE_TTL/1000});return;
@@ -1091,9 +1112,9 @@ export class Relay {
       // 手机端据此退回通用服务器图标。
       // 在线是「最近真的说过话」而不是「隧道还开着」：电脑关机后 TCP 可能半开，
       // 只看连接状态会让绿点一直亮着。顺手对整个列表补一次探测，下一次拉取就是真相。
-      const rows=this.store.all('SELECT id,alias,platform FROM hosts WHERE account_id=? AND revoked=0',s.account_id);
+      const rows=this.store.clientHosts(s,clientType);
       for(const h of rows)this.proxy.probe(h.id);
-      json({items:rows.map(h=>({hostId:h.id,alias:h.alias,platform:h.platform??'',online:this.proxy.online(h.id),authorized:!!this.store.get('SELECT host_id FROM grants WHERE host_id=? AND device_id=? AND revoked=0',h.id,s.device_id)}))});return;
+      json({items:rows.map(h=>({hostId:h.id,alias:h.alias,platform:h.platform??'',clientType:h.client_type,online:this.proxy.online(h.id),authorized:!!this.store.get('SELECT host_id FROM grants WHERE host_id=? AND device_id=? AND revoked=0',h.id,s.device_id)}))});return;
     }
     const changesPath=/^\/native\/v2\/hosts\/([a-f0-9]{32})\/changes$/.exec(path);
     if(changesPath&&method==='GET'){
@@ -1106,13 +1127,14 @@ export class Relay {
       return;
     }
     if(path==='/native/v2/pair'&&method==='POST'){
-      this.store.rate('pair:'+s.account_id,10,60000);const b=await body(req),id=this.store.pair(s,b.code??'');if(!id)throw new HttpError(403,'pair-rejected');json({hostId:id});return;
+      this.store.rate('pair:'+s.account_id,10,60000);const b=await body(req),id=this.store.pair(s,b.code??'',clientType);if(!id)throw new HttpError(403,'pair-rejected');json({hostId:id});return;
     }
     // 解绑：这台手机不再能操作那台主机。撤的是 grant（设备↔主机），
     // 不是 device —— 后者会连这台手机的全部主机一起废掉，语义差得远。
     if(path==='/native/v2/unpair'&&method==='POST'){
       const b=await body(req),hostId=String(b.hostId??'');
       if(!/^[a-f0-9]{32}$/.test(hostId))throw new HttpError(400,'host-required');
+      this.store.assertClientHost(s,hostId,clientType);
       this.store.rate('unpair:'+s.account_id,...RATE.unpair);
       this.store.revoke(s,'grant',s.device_id,hostId);
       json({ok:true});return;
@@ -1199,6 +1221,8 @@ export class Relay {
     this.nativeOnly(req);
     const json=(value:string)=>{res.writeHead(200,{'content-type':'application/json; charset=utf-8','cache-control':'no-store'});res.end(value);};
     const s=this.store.session(this.bearer(req),'native');
+    const scopedHost=/^\/native\/v2\/hosts\/([a-f0-9]{32})(?:\/|$)/.exec(path);
+    if(scopedHost)this.store.assertClientHost(s,scopedHost[1]!,this.clientType(req));
     const sync=/^\/native\/v2\/hosts\/([a-f0-9]{32})\/sync$/.exec(path);
     if(sync&&method==='POST'){
       const hostId=sync[1]!;
@@ -1391,8 +1415,17 @@ export function configFromEnv():RelayConfig{
  * 是自己忘了配密码，所以这一条必须当场炸在 `docker logs` 第一屏。
  */
 export function requireCredentials(config:RelayConfig):void{
-  if(!config.adminEmail||!config.adminPassword)
-    throw new Error('RELAY_PASSWORD is required to bootstrap the relay (or set RELAY_ADMIN_EMAIL and RELAY_ADMIN_PASSWORD)');
+  if(config.adminEmail&&config.adminPassword)return;
+  // 老部署已通过 create-account 初始化，不应在每次升级时要求重新提供管理员明文密码。
+  let existing:DatabaseSync|undefined;
+  try{
+    if(!config.database.startsWith(':')){
+      existing=new DatabaseSync(config.database,{readOnly:true});
+      if(existing.prepare('SELECT 1 FROM accounts WHERE disabled=0 LIMIT 1').get())return;
+    }
+  }catch{/* 新库或无有效账号仍走首次启动门禁。 */}
+  finally{existing?.close();}
+  throw new Error('RELAY_PASSWORD is required to bootstrap the relay (or set RELAY_ADMIN_EMAIL and RELAY_ADMIN_PASSWORD)');
 }
 /** 单一密码模式下自动生成的账号邮箱。够用来登录，也不至于被人误当成真实邮箱。 */
 export const PASSWORD_MODE_EMAIL='admin@relay.local';

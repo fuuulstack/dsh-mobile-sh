@@ -104,6 +104,10 @@ RELAY_PASSWORD='replace-with-a-long-password' \
 
 公网部署请在前面放 TLS 反向代理，并按需设置 `RELAY_BASE_URL`、`RELAY_TRUSTED_PROXY`、`RELAY_PORT`；未钉住 `RELAY_BASE_URL` 时，中继按请求的 `Host` 与 `X-Forwarded-Proto` 现推绝对地址。完整变量表与 nginx 示例见 `deploy/README.md`、`docs/RELAY-DEPLOY.md`。
 
+同一中继可同时接入 DSH 和 ChatGPT 主机。主机注册时通过 `clientType` 声明 `dsh` 或 `chatgpt`；手机通过 `X-Client-Type` 请求对应类型的设备列表。未声明时默认为 `dsh`，兼容旧客户端。配对、解绑、会话、归档和控制接口也会检查类型。
+
+升级会保留已有身份和配对关系，历史主机默认归为 `dsh`。已有 ChatGPT 主机可用自己的主机令牌调用 `POST /control/identify`，提交 `{hostId, clientType: "chatgpt"}` 补登记；新版 ChatGPT adapter 会在复用身份时自动完成。已有有效账号的数据库升级启动无需重新提供管理员明文密码，新库仍需首次初始化凭据。
+
 ### 3. 在 DSH 里配置插件
 
 装好插件后，DSH 侧栏会出现「手机访问」：

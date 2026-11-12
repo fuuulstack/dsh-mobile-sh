@@ -1,14 +1,14 @@
 # dsh-mobile-sh 接手文档
 
-> 更新于 2026-11-12 · 本轮：修复「已中断」误报（抽屉同源 / 断流宽限 / 插件脉搏）。状态、卡点与下一步见下；架构、契约与验收见 `docs/PRD.md`。
+> 更新于 2026-11-12 · 本轮：中继客户端类型隔离、旧部署启动兼容与 ChatGPT 独立 APK 渠道；保留 DSH 原有交接事项。
 
 ## 一、现在
 
-**状态**：手机 0.2.61/vc62 本轮发版（含「已中断」误报修复；子智能体胶囊按「明确在跑」判定）。三端 v2 已上线：中继裸 IP 部署 + 内建 APK 托管，插件 SQLite outbox + 控制流，手机 Room + `Projector`。TS 264 / Android 543 全绿；本轮修「已中断」误报（坑 95），待真机复验；发布前隐私审计已收口（个人域名、凭据、设备标识、agent 日志与基线截图均已清）。
+**状态**：DSH 手机仍为 0.2.61/vc62，原 Android 543 项通过。中继新增 chatgpt/dsh 设备与接口隔离、旧主机 identify 补登记、已有账号升级免管理员明文密码；ChatGPT APK 独立台账与下载渠道已部署，关联仓库已发布 0.2.63。中继 265 项测试中 264 通过、1 跳过，类型、命名与打包门禁通过；DSH 版本台账未变。
 
-**卡点**：①真机「长按删除不能删」本地复现不出，待确认 APK 版本与实际现象；②同一轮冒两段折叠行，旁路在 `Projector.applyStreaming` 的 overlay；③子智能体活体只在假宿主桩上验过，未在真链路派子代理；④真机逐项验收剩余条目。
+**卡点**：DSH 真机长按删除未复现；同轮两段折叠行待修；子智能体活体仅假宿主验证；「已中断」误报修复及其余条目待真机复验。
 
-**下一步**：修两段折叠行；真机复验「已中断」修复；真机验子代理胶囊与长按删除；清理旧私有库中已合并的分支（需用户点头）。
+**下一步**：修折叠行，复验中断状态、子代理胶囊与删除；ChatGPT 手机控制在关联仓库继续验收。旧分支清理需用户授权。
 
 ## 二、环境与入口
 
@@ -16,12 +16,16 @@
 |---|---|
 | 工作目录 | `~/WebstormProjects/dsh-mobile-sh`（main；git 走 Clash 代理 `127.0.0.1:7890`，直连 GitHub 报 `LibreSSL SSL_ERROR_SYSCALL`） |
 | Node | macOS 默认 v22 会让 `npm run check` 报 `argon2` 导出缺失；先 `export PATH="$HOME/.nvm/versions/node/v24.13.0/bin:$PATH"` |
-| TS 门禁 | 项目根 `npm run check` ＝ tsc + 命名门禁 + 264 项测试 + esbuild 打包；全新 clone 先 `npm run build`（`tests/plugin-ui.test.ts` 要读 `dist/client.js`） |
+| TS 门禁 | 项目根 `npm run check` ＝ tsc + 命名门禁 + 265 项测试（264 通过、1 跳过）+ esbuild 打包；全新 clone 先 `npm run build`（`tests/plugin-ui.test.ts` 要读 `dist/client.js`） |
 | Android 门禁 | `cd android && ./gradlew :app:testDebugUnitTest :app:assembleDebug`；JDK 17 + `ANDROID_HOME`（系统 JDK 26 会让 Gradle 8.13 报 major version 70）；`set -o pipefail`（`| tail` 吞退出码） |
 | 签名 / 发版 | release 用服务器 `dsh-release.keystore`，`ANDROID_KEYSTORE` 四件套全走环境变量，指纹用 `apksigner verify --print-certs` 核对；`bash scripts/release-android.sh <ver> "说明"`，目标与清单地址由 `RELAY_URL` / `RELEASE_SSH_HOST` / `RELEASE_BASE_URL` / `-PreleaseFallbackManifestUrl` 注入 |
 | 本机插件 | `~/.dsh/profiles/desktop/node_modules/dsh-mobile-sh/dist/`；同版本号别用 `dsh plugin add`（不重新解包，坑 31），直接覆盖 5 个 dist 文件并看热重载日志；装的是哪版看 `dist/build-info.json` |
 | 调试 | 移动端一律 mobilewright（`~/.agents/mcp/mobilewright/mobilewright-cli`；模拟器 id `test_emulator`、adb `emulator-5554`）；别与 `uiautomator dump` 同用（抢 UiAutomationService，坑 59） |
 | 文档入口 | `README.md`（项目说明 / 用法 / 安装 / MIT）· `docs/PRD.md`（需求 / 契约 / 验收）· `AGENTS.md`（功能 / 代码地图 / 最近坑）· `docs/pitfalls.md`（坑全表 1~95）· `docs/RELAY-DEPLOY.md`（部署）· `docs/plugin-ui.md`（插件面板）· `LICENSE`（MIT 协议全文）· `HANDOFF.md`（本文） |
+| 关联 ChatGPT 仓库 | `https://github.com/fuuulstack/chatgpt-mobile-sh`；Tauri／IPC、Android 0.2.63 与手机设置 ACK 的交接在该仓库 `HANDOFF.md` |
+| 客户端类型 | 手机 `X-Client-Type: chatgpt` 或 `dsh`，缺省 `dsh`；主机注册 `clientType`，已有 ChatGPT 主机通过认证 `/control/identify` 补登记 |
+| APK 渠道 | DSH 保持 `/api/dsh-mobile-sh-apk/downloads/` 与 `releases` 表；ChatGPT 使用 `/api/chatgpt-mobile-sh-apk/downloads/` 与 `chatgpt_releases` 表；文件、清单、计数和清理独立 |
+| 发布约束 | `/control/release` 按已认证主机类型选渠道，不能用 query 覆盖；ChatGPT 清单额外带 `clientType`／`applicationId`；真实部署地址和凭据沿用私有运维配置，不写入本仓库 |
 
 环境与命令全文见 `docs/RELAY-DEPLOY.md` 及 `AGENTS.md`「五、构建 / 测试 / 发布」「六、调试」。
 
@@ -36,6 +40,11 @@
 - [ ] **a2a-az 模型参数**（仓库外）：本机 `~/.dsh/profiles/desktop/cordis.patch.yml` 的 `a2a-az` 约 48 个模型补 `input` 与 `reasoningEfforts`，数据源 model.dev，其它参数不动。
 
 里程碑（已完成）：三端 v2 重构上线（中继 `/v2/sync` + 插件 outbox / 控制流 + 手机 Room / `Projector`）；v1 面 410 下线；中继 Docker 化与内建 APK 托管；裸 IP 部署；0.2.60 三颗胶囊；发布前隐私审计；2026-11-12 修复「已中断」误报（抽屉同源 / 断流宽限 / 插件脉搏，坑 95）。
+
+- [x] 设备列表、配对／解绑、会话／归档、HTTP／WS 控制均校验客户端类型，旧 DSH 客户端兼容。
+- [x] 已有有效账号的旧部署启动不再要求重新提供管理员明文密码，新库仍保留初始化门禁。
+- [x] ChatGPT 独立 APK 管理与分发，覆盖同版本隔离、Range、计数、清理、删除及跨渠道拒绝测试。
+- [x] 已部署中继并发布关联 ChatGPT 0.2.63，公开清单、TLS 下载和包哈希验证通过。
 
 ## 四、细节在哪
 
@@ -98,3 +107,6 @@
 | 续传协议与游标 | tests/sync-cursor.test.ts | 全文 |
 | 插件 UI 测试基线 | tests/plugin-ui.test.ts | 全文 |
 | 中继运维测试基线 | tests/relay-ops.test.ts | 全文 |
+| 客户端类型与旧部署升级说明 | README.md | 启动中继 |
+| 两类 APK 渠道隔离回归 | tests/relay-release.test.ts | 全文 |
+| 已有账号升级启动回归 | tests/relay-bootstrap.test.ts | 全文 |

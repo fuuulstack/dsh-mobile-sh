@@ -13,6 +13,14 @@
 
 /** 下载面（相对于中继根地址）。公开可读：手机检查更新时还没登录。 */
 export const RELEASE_PREFIX = '/api/dsh-mobile-sh-apk/downloads';
+export const CHATGPT_RELEASE_PREFIX = '/api/chatgpt-mobile-sh-apk/downloads';
+export type ReleaseClient = 'dsh' | 'chatgpt';
+export function releaseTable(client: ReleaseClient = 'dsh'): string {
+  return client === 'chatgpt' ? 'chatgpt_releases' : 'releases';
+}
+export function releasePrefix(client: ReleaseClient = 'dsh'): string {
+  return client === 'chatgpt' ? CHATGPT_RELEASE_PREFIX : RELEASE_PREFIX;
+}
 
 /** 永远指向最新一个版本的稳定链接（手工分发、旧客户端都用得上）。 */
 export const RELEASE_LATEST_ALIAS = 'latest.apk';
@@ -37,9 +45,9 @@ export function isValidVersion(version: string): boolean {
 }
 
 /** 卷上的文件名。带版本号而不是固定名：安装器按路径/大小/时间戳判断「要不要换」，同一个名字会让它复用上一份。 */
-export function releaseFileName(version: string): string {
+export function releaseFileName(version: string, client: ReleaseClient = 'dsh'): string {
   if (!isValidVersion(version)) throw new Error(`invalid-version:${version}`);
-  return `dsh-mobile-${version}.apk`;
+  return `${client === 'chatgpt' ? 'chatgpt' : 'dsh'}-mobile-${version}.apk`;
 }
 
 /** 说明文字落进清单前要收敛：换行会被 App 的单行文案吃掉，控制字符进 JSON 也是麻烦。 */
@@ -68,17 +76,18 @@ export type ReleaseRowLike = Record<string, unknown>;
  * 读它，顺序变了容易让人一眼看错。`url` 与 `latestUrl` 都指到**本中继**——这正是
  * 「切到中继、旧地址做回落」的前提：清单从哪来，包就从哪下。
  */
-export function manifestOf(row: ReleaseRowLike, baseUrl: string) {
+export function manifestOf(row: ReleaseRowLike, baseUrl: string, client: ReleaseClient = 'dsh') {
   const version = String(row.version);
   return {
     latest: version,
     minSupported: String(row.min_supported ?? ''),
-    url: `${baseUrl}/${releaseFileName(version)}`,
+    url: `${baseUrl}/${releaseFileName(version, client)}`,
     latestUrl: `${baseUrl}/${RELEASE_LATEST_ALIAS}`,
     size: Number(row.byte_size ?? 0),
     sha256: String(row.sha256 ?? ''),
     notes: String(row.notes ?? ''),
     publishedAt: String(row.published_at ?? ''),
+    ...(client === 'chatgpt' ? { clientType: client, applicationId: 'com.chatgpt.mobile.sh' } : {}),
   };
 }
 

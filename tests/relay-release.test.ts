@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Relay } from '../packages/relay/src/server.js';
 import { secret, uuid } from '../packages/relay/src/crypto.js';
-import { RELEASE_PREFIX } from '../packages/relay/src/release.js';
+import { RELEASE_PREFIX, CHATGPT_RELEASE_PREFIX } from '../packages/relay/src/release.js';
 
 /**
  * 中继自己托管 APK 分发这条链路。
@@ -26,6 +26,44 @@ interface Booted {
   dir: string;
   close: () => Promise<void>;
 }
+
+test('ChatGPT 与 DSH 同版本独立发布、列举、Range、计数、清理和删除，禁止跨渠道操作', async t => {
+  const b = await boot({ keep: 1 });
+  t.after(() => b.close());
+  const account = b.relay.store.get('SELECT account_id FROM hosts WHERE id=?', b.hostId)!;
+  const token = secret(32);
+  const chat = b.relay.store.enrollWithAccount(account.account_id, {
+    operationId: uuid(), hostPublicId: uuid(), hostTunnelToken: token, alias: 'ChatGPT', clientType: 'chatgpt',
+  });
+  const dshApk = fakeApk(256, 1), chatApk = fakeApk(384, 2);
+  assert.equal((await publish(b, dshApk, '1.0')).status, 200);
+  assert.equal((await publish(b, chatApk, '1.0', { hostId: chat.hostId, token })).status, 200);
+  const manifest = JSON.parse((await request(b.port, `${CHATGPT_RELEASE_PREFIX}/version.json`)).body.toString());
+  assert.equal(manifest.clientType, 'chatgpt');
+  assert.equal(manifest.applicationId, 'com.chatgpt.mobile.sh');
+  assert.equal(manifest.sha256, sha256(chatApk));
+  assert.match(manifest.url, /chatgpt-mobile-1\.0\.apk$/);
+  assert.deepEqual((await request(b.port, `${RELEASE_PREFIX}/latest.apk`)).body, dshApk);
+  const range = await request(b.port, `${CHATGPT_RELEASE_PREFIX}/latest.apk`, { headers: { range: 'bytes=8-23' } });
+  assert.equal(range.status, 206);
+  assert.deepEqual(range.body, chatApk.subarray(8, 24));
+  assert.equal(b.relay.store.releaseGet('1.0')!.downloads, 1);
+  assert.equal(b.relay.store.releaseGet('1.0', 'chatgpt')!.downloads, 0);
+  const list = await request(b.port, `/control/release?hostId=${chat.hostId}`, { headers: { authorization: `Bearer ${token}` } });
+  assert.equal(JSON.parse(list.body.toString()).items[0].sha256, sha256(chatApk));
+  const denied = await request(b.port, `/control/release?hostId=${chat.hostId}&clientType=dsh&version=1.0`,
+    { method: 'DELETE', headers: { authorization: `Bearer ${token}` } });
+  assert.equal(denied.status, 403);
+  await publish(b, fakeApk(512, 3), '2.0', { hostId: chat.hostId, token });
+  assert.equal(b.relay.store.releaseGet('1.0', 'chatgpt'), undefined);
+  assert.ok(b.relay.store.releaseGet('1.0'));
+  assert.equal((await request(b.port, `${CHATGPT_RELEASE_PREFIX}/chatgpt-mobile-1.0.apk`)).status, 404);
+  const deleted = await request(b.port, `/control/release?hostId=${chat.hostId}&version=2.0`,
+    { method: 'DELETE', headers: { authorization: `Bearer ${token}` } });
+  assert.equal(deleted.status, 200);
+  assert.equal((await request(b.port, `${CHATGPT_RELEASE_PREFIX}/version.json`)).status, 404);
+  assert.equal((await request(b.port, `${RELEASE_PREFIX}/version.json`)).status, 200);
+});
 
 async function boot(options: { pinned?: boolean; keep?: number } = {}): Promise<Booted> {
   const dir = mkdtempSync(join(tmpdir(), 'relay-release-'));

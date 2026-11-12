@@ -14,6 +14,47 @@ function request(port:number,path:string,token:string,data?:Buffer,method='POST'
   });req.on('error',reject);req.end(data);
 });}
 
+test('native clients isolate host lists, pairing and host operations by client type',{timeout:20000},async t=>{
+  const relay=new Relay({baseUrl:'https://relay.example.test',database:':memory:',key:Buffer.alloc(32,3),requireTotp:false,testMode:true});
+  const port=await relay.listen(0);t.after(()=>relay.close());
+  await relay.store.createAccount('types@example.test','long-test-password',false);
+  const login=await relay.store.login('types@example.test','long-test-password','',false,'Android',true);
+  const session=relay.store.session(login.token,'native');
+  const account={...session,kind:'account'};
+  const hostToken=secret();
+  const legacy=relay.store.enrollWithAccount(session.account_id,{operationId:uuid(),hostPublicId:uuid(),hostTunnelToken:hostToken,alias:'Legacy'});
+  const chat=relay.store.enrollWithAccount(session.account_id,{operationId:uuid(),hostPublicId:uuid(),hostTunnelToken:secret(),alias:'ChatGPT',clientType:'chatgpt'});
+  assert.equal(relay.store.get('SELECT client_type FROM hosts WHERE id=?',legacy.hostId)!.client_type,'dsh');
+  // 旧授权即使曾串过类型，也不能借缓存中的 hostId 继续越过类型过滤。
+  for(const host of [legacy,chat])relay.store.pair(session,relay.store.createPair(account,host.hostId).code);
+  const list=async(type?:string)=>{
+    const r=await request(port,'/native/v2/hosts',login.token,undefined,'GET',type?{'x-client-type':type}:{});
+    assert.equal(r.status,200);return JSON.parse(r.body.toString()).items;
+  };
+  assert.deepEqual((await list()).map((h:any)=>h.hostId),[legacy.hostId]);
+  assert.deepEqual((await list('dsh')).map((h:any)=>h.hostId),[legacy.hostId]);
+  assert.deepEqual((await list('chatgpt')).map((h:any)=>h.hostId),[chat.hostId]);
+  assert.equal((await list('chatgpt'))[0].clientType,'chatgpt');
+  assert.equal((await request(port,'/native/v2/hosts',login.token,undefined,'GET',{'x-client-type':'other'})).status,400);
+  for(const [hostId,type] of [[legacy.hostId,'chatgpt'],[chat.hostId,'dsh']]){
+    for(const suffix of ['sessions','changes','blobs/example']){
+      assert.equal((await request(port,`/native/v2/hosts/${hostId}/${suffix}`,login.token,undefined,'GET',{'x-client-type':type!})).status,404);
+    }
+    for(const suffix of ['sync','rpc/projections']){
+      assert.equal((await request(port,`/native/v2/hosts/${hostId}/${suffix}`,login.token,Buffer.from('{}'),'POST',{'x-client-type':type!})).status,404);
+    }
+    assert.equal((await request(port,'/native/v2/unpair',login.token,Buffer.from(JSON.stringify({hostId})),'POST',{'x-client-type':type!})).status,404);
+  }
+  const pair=relay.store.createPair(account,chat.hostId);
+  assert.equal((await request(port,'/native/v2/pair',login.token,Buffer.from(JSON.stringify({code:pair.code})))).status,403);
+  assert.equal((await request(port,'/native/v2/pair',login.token,Buffer.from(JSON.stringify({code:pair.code})),'POST',{'x-client-type':'chatgpt'})).status,200,'wrong type must not consume the code');
+  const identify=Buffer.from(JSON.stringify({hostId:legacy.hostId,clientType:'chatgpt'}));
+  assert.equal((await request(port,'/control/identify',secret(),identify)).status,403);
+  assert.equal((await request(port,'/control/identify',hostToken,identify)).status,200);
+  assert.equal((await list()).length,0);
+  assert.equal((await list('chatgpt')).length,2);
+});
+
 test('native token rotation keeps a 60 s grace on the old bearer and issues a fresh one',{timeout:20000},async t=>{
   const relay=new Relay({baseUrl:'https://relay.example.test',database:':memory:',key:Buffer.alloc(32,3),requireTotp:false,testMode:true});const port=await relay.listen(0);
   t.after(async()=>{await relay.close();});

@@ -8,6 +8,7 @@ import { Relay, configFromEnv, requireCredentials, PASSWORD_MODE_EMAIL, type Rel
 import { secret, totp, uuid } from '../packages/relay/src/crypto.js';
 import { capacityFor, capacityFromEnv, DEFAULT_CAPACITY } from '../packages/relay/src/limits.js';
 import { trustedPeer } from '../packages/relay/src/proxy.js';
+import { Store } from '../packages/relay/src/store.js';
 
 /**
  * 「一行命令就能跑起来」这条承诺的最小可执行定义。
@@ -135,6 +136,20 @@ test('半开配置给出指名道姓的错误，而不是起一半', t => {
   assert.throws(() => config(t, { RELAY_ADMIN_PASSWORD: 'pw' }), /RELAY_ADMIN_EMAIL is required/);
   assert.throws(() => config(t, { RELAY_ENROLL_PASSWORD: 'pw' }), /RELAY_ENROLL_ACCOUNT is required/);
   assert.throws(() => config(t, { RELAY_ENROLL_ACCOUNT: 'a@example.test' }), /RELAY_ENROLL_PASSWORD is required/);
+});
+
+test('已初始化的旧部署升级时无需重新提供管理员明文密码',async t=>{
+  const dir=mkdtempSync(join(tmpdir(),'relay-existing-'));
+  t.after(()=>rmSync(dir,{recursive:true,force:true}));
+  const path=join(dir,'relay.db');
+  const c={...config(t,{}),database:path};
+  assert.throws(()=>requireCredentials(c),/RELAY_PASSWORD is required/);
+  const store=new Store(path,Buffer.alloc(32,1));
+  await store.createAccount('existing@example.test','existing-long-password',false);
+  assert.doesNotThrow(()=>requireCredentials(c));
+  store.run('UPDATE accounts SET disabled=1');
+  assert.throws(()=>requireCredentials(c),/RELAY_PASSWORD is required/);
+  store.close();
 });
 
 test('容量参数缺省等于原来的常量，只会往里收窄', t => {

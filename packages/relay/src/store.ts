@@ -5,6 +5,7 @@ import { decrypt, encrypt, equal, hash, passwordHash, passwordValid, secret, tot
 import { HttpError } from '../../core/src/security.js';
 import type { Identity } from '../../core/src/protocol.js';
 import { classify } from '../../core/src/classify.js';
+import { releaseTable, type ReleaseClient } from './release.js';
 
 export type Row=Record<string,any>;
 /**
@@ -132,6 +133,10 @@ export class Store extends EventEmitter {
         version TEXT PRIMARY KEY,file_name TEXT NOT NULL,byte_size INTEGER NOT NULL,
         sha256 TEXT NOT NULL,notes TEXT NOT NULL DEFAULT '',min_supported TEXT NOT NULL DEFAULT '',
         published_at TEXT NOT NULL,created_at INTEGER NOT NULL,downloads INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS chatgpt_releases(
+        version TEXT PRIMARY KEY,file_name TEXT NOT NULL,byte_size INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,notes TEXT NOT NULL DEFAULT '',min_supported TEXT NOT NULL DEFAULT '',
+        published_at TEXT NOT NULL,created_at INTEGER NOT NULL,downloads INTEGER NOT NULL DEFAULT 0);
 
       -- ---- 二级索引：按「真实会跑的查询」逐条建，不是按「看起来该有」建 ----
       --
@@ -192,6 +197,8 @@ export class Store extends EventEmitter {
     // schema_version 保持 1：这是一次向后兼容的纯增量，老版本代码读不到新列也不受影响。
     if(!(this.all('PRAGMA table_info(hosts)') as Row[]).some(c=>c.name==='platform'))
       this.db.exec(`ALTER TABLE hosts ADD COLUMN platform TEXT NOT NULL DEFAULT ''`);
+    if(!(this.all('PRAGMA table_info(hosts)') as Row[]).some(c=>c.name==='client_type'))
+      this.db.exec(`ALTER TABLE hosts ADD COLUMN client_type TEXT NOT NULL DEFAULT 'dsh' CHECK(client_type IN ('dsh','chatgpt'))`);
     // 附件传输开关：按**设备**记在 devices 上，不是手机本地的显示偏好。
     // 设置页那个开关只是它的遥控器——关掉之后中继拒绝为这台设备转发
     // `session/attachment`（回读图片字节）与 `uploadFileBinary`（发文件），
@@ -322,7 +329,7 @@ export class Store extends EventEmitter {
     return this.attachmentsAllowed(s);
   }
   invitation(s:Row){const token=secret();return this.transaction(()=>{this.run('INSERT INTO invitations VALUES(?,?,?,0)',hash(token),s.account_id,this.now()+300000);this.audit(s.account_id,'invitation-created');return token;});}
-  enroll(invitation:string,input:{operationId:string;hostPublicId:string;hostTunnelToken:string;alias:string;platform?:string}){
+  enroll(invitation:string,input:{operationId:string;hostPublicId:string;hostTunnelToken:string;alias:string;platform?:string;clientType?:'dsh'|'chatgpt'}){
     const digest=hash(invitation),tokenHash=hash(input.hostTunnelToken);
     // platform 可选：老插件不上报，收到的也不是任意字符串——它最终会变成手机端的图标，
     // 所以白名单到三个值，其余一律存空串（手机端退回通用图标），不给脏数据留通道。
@@ -332,7 +339,7 @@ export class Store extends EventEmitter {
       if(receipt){if(receipt.expires<this.now()||!equal(receipt.invitation,digest)||!equal(receipt.token_hash,tokenHash)||receipt.public_id!==input.hostPublicId)throw new HttpError(403,'enroll-rejected');return {hostId:receipt.host_id};}
       const i=this.get('SELECT i.* FROM invitations i JOIN accounts a ON a.id=i.account_id WHERE i.hash=? AND i.used=0 AND i.expires>? AND a.disabled=0',digest,this.now());if(!i)throw new HttpError(403,'enroll-rejected');
       if(this.get('SELECT count(*) n FROM hosts WHERE account_id=? AND revoked=0',i.account_id)!.n>=10)throw new HttpError(429,'host-limit');
-      const id=uuid();this.run('INSERT INTO hosts VALUES(?,?,?,?,?,0,?)',id,i.account_id,input.hostPublicId,input.alias.slice(0,80),tokenHash,platform);this.run('UPDATE invitations SET used=1 WHERE hash=?',digest);
+      const id=uuid();this.run('INSERT INTO hosts(id,account_id,public_id,alias,token_hash,revoked,platform,client_type) VALUES(?,?,?,?,?,0,?,?)',id,i.account_id,input.hostPublicId,input.alias.slice(0,80),tokenHash,platform,input.clientType??'dsh');this.run('UPDATE invitations SET used=1 WHERE hash=?',digest);
       this.run('INSERT INTO receipts VALUES(?,?,?,?,?,?)',input.operationId,digest,input.hostPublicId,tokenHash,id,this.now()+600000);this.audit(i.account_id,'host-enrolled',id);return {hostId:id};
     });
   }
@@ -344,6 +351,18 @@ export class Store extends EventEmitter {
   notePlatform(hostId:string,platform:string){
     const value=normalizePlatform(platform);if(!value)return;
     this.run("UPDATE hosts SET platform=? WHERE id=? AND (platform='' OR platform IS NULL)",value,hostId);
+  }
+  identifyClient(hostId:string,token:string,clientType:'dsh'|'chatgpt'){
+    this.authenticate(hostId,token);
+    if(clientType!=='dsh'&&clientType!=='chatgpt')throw new HttpError(400,'invalid-client-type');
+    this.run('UPDATE hosts SET client_type=? WHERE id=?',clientType,hostId);
+  }
+  assertClientHost(s:Row,hostId:string,clientType:'dsh'|'chatgpt'){
+    if(!this.get('SELECT id FROM hosts WHERE id=? AND account_id=? AND client_type=?',hostId,s.account_id,clientType))
+      throw new HttpError(404,'not-found');
+  }
+  clientHosts(s:Row,clientType:'dsh'|'chatgpt'){
+    return this.all('SELECT id,alias,platform,client_type FROM hosts WHERE account_id=? AND revoked=0 AND client_type=?',s.account_id,clientType);
   }
   /**
    * 部署方自定义的「主机注册密码」落在哪个账号上。
@@ -370,7 +389,7 @@ export class Store extends EventEmitter {
    * @param input 主机身份与别名
    * @returns 主机 id
    */
-  enrollWithAccount(accountId:string,input:{operationId:string;hostPublicId:string;hostTunnelToken:string;alias:string;platform?:string}){
+  enrollWithAccount(accountId:string,input:{operationId:string;hostPublicId:string;hostTunnelToken:string;alias:string;platform?:string;clientType?:'dsh'|'chatgpt'}){
     const tokenHash=hash(input.hostTunnelToken);
     const platform=normalizePlatform(input.platform);
     return this.transaction(()=>{
@@ -379,7 +398,7 @@ export class Store extends EventEmitter {
       if(receipt){if(!equal(receipt.token_hash,tokenHash)||receipt.public_id!==input.hostPublicId)throw new HttpError(403,'enroll-rejected');return {hostId:receipt.host_id as string};}
       if(this.get('SELECT count(*) n FROM hosts WHERE account_id=? AND revoked=0',accountId)!.n>=10)throw new HttpError(429,'host-limit');
       const id=uuid();
-      this.run('INSERT INTO hosts VALUES(?,?,?,?,?,0,?)',id,accountId,input.hostPublicId,input.alias.slice(0,80),tokenHash,platform);
+      this.run('INSERT INTO hosts(id,account_id,public_id,alias,token_hash,revoked,platform,client_type) VALUES(?,?,?,?,?,0,?,?)',id,accountId,input.hostPublicId,input.alias.slice(0,80),tokenHash,platform,input.clientType??'dsh');
       this.run('INSERT INTO receipts VALUES(?,?,?,?,?,?)',input.operationId,hash('custom-password'),input.hostPublicId,tokenHash,id,this.now()+600000);
       this.audit(accountId,'host-enrolled',id);return {hostId:id};
     });
@@ -436,13 +455,14 @@ export class Store extends EventEmitter {
     });
     return code;
   }
-  pair(s:Row,value:string){const digest=hash(value);return this.transaction(()=>{
+  pair(s:Row,value:string,clientType?:'dsh'|'chatgpt'){const digest=hash(value);return this.transaction(()=>{
     const p=this.get('SELECT * FROM pairs WHERE account_id=? AND (code_hash=? OR token_hash=?) AND expires>? AND used=0 AND attempts<5',s.account_id,digest,digest,this.now());
     // Charge only the row this code actually matches: the old blanket increment burned every
     // active pairing code of the account (a typo on one device killed the QR on another),
     // while the account-level rate limit above already caps blind brute force.
     if(!p){this.run('UPDATE pairs SET attempts=attempts+1 WHERE account_id=? AND used=0 AND expires>? AND (code_hash=? OR token_hash=?)',s.account_id,this.now(),digest,digest);return null;}
     if(!this.get('SELECT id FROM hosts WHERE id=? AND account_id=? AND revoked=0',p.host_id,s.account_id))return null;
+    if(clientType&&!this.get('SELECT id FROM hosts WHERE id=? AND client_type=?',p.host_id,clientType))return null;
     this.run('INSERT INTO grants VALUES(?,?,?,1,0) ON CONFLICT(host_id,device_id) DO UPDATE SET revoked=0,version=version+1',p.host_id,s.device_id,s.account_id);this.run('UPDATE pairs SET used=1 WHERE id=?',p.id);this.audit(s.account_id,'device-paired',p.host_id);return p.host_id as string;
   });}
 
@@ -962,38 +982,39 @@ export class Store extends EventEmitter {
    * 那个数字描述的是「这个版本被下载过多少次」，不是「这一行存在多久」。
    */
   releasePut(r:{version:string;file_name:string;byte_size:number;sha256:string;
-    notes?:string;min_supported?:string;published_at:string;account_id?:string|null}){
-    const prev=this.releaseGet(r.version);
+    notes?:string;min_supported?:string;published_at:string;account_id?:string|null},client:ReleaseClient='dsh'){
+    const prev=this.releaseGet(r.version,client);
     this.transaction(()=>{
-      this.run(`INSERT OR REPLACE INTO releases(version,file_name,byte_size,sha256,notes,min_supported,published_at,created_at,downloads)
+      this.run(`INSERT OR REPLACE INTO ${releaseTable(client)}(version,file_name,byte_size,sha256,notes,min_supported,published_at,created_at,downloads)
         VALUES(?,?,?,?,?,?,?,?,?)`,
         r.version,r.file_name,r.byte_size,r.sha256,r.notes??'',r.min_supported??'',r.published_at,
         prev?Number(prev.created_at):this.now(),prev?Number(prev.downloads):0);
       // 归属账号尽量落下来：这条审计要回答「谁把包放到这台中继上的」。
-      this.audit(r.account_id??null,'release-published',r.version);
+      this.audit(r.account_id??null,'release-published',`${client}:${r.version}`);
     });
   }
 
-  releaseGet(version:string){return this.get('SELECT * FROM releases WHERE version=?',version);}
+  releaseGet(version:string,client:ReleaseClient='dsh'){return this.get(`SELECT * FROM ${releaseTable(client)} WHERE version=?`,version);}
+  releaseByFile(name:string,client:ReleaseClient='dsh'){return this.get(`SELECT * FROM ${releaseTable(client)} WHERE file_name=?`,name);}
 
   /** 最新发布（清单里 `latest` 的来源）。按 `created_at` 而不是版本号排序：
    *  版本号是作者写的，`0.10` 与 `0.9` 谁更新得靠分段比较，而「最后发布的那个」
    *  语义上就该是台账里的最新一行。 */
-  releaseLatest(){return this.get('SELECT * FROM releases ORDER BY created_at DESC LIMIT 1');}
+  releaseLatest(client:ReleaseClient='dsh'){return this.get(`SELECT * FROM ${releaseTable(client)} ORDER BY created_at DESC, rowid DESC LIMIT 1`);}
 
-  releaseList(limit=20){return this.all('SELECT * FROM releases ORDER BY created_at DESC LIMIT ?',limit);}
+  releaseList(limit=20,client:ReleaseClient='dsh'){return this.all(`SELECT * FROM ${releaseTable(client)} ORDER BY created_at DESC, rowid DESC LIMIT ?`,limit);}
 
   /** 超出版本数保留策略的旧版本（返回版本号，调用方负责删卷上的文件）。 */
-  releaseTrim(keep:number){
-    const rows=this.all('SELECT version FROM releases ORDER BY created_at DESC LIMIT -1 OFFSET ?',Math.max(0,keep));
+  releaseTrim(keep:number,client:ReleaseClient='dsh'){
+    const rows=this.all(`SELECT version FROM ${releaseTable(client)} ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET ?`,Math.max(0,keep));
     if(rows.length===0)return [] as string[];
-    this.transaction(()=>{for(const r of rows)this.run('DELETE FROM releases WHERE version=?',r.version);});
+    this.transaction(()=>{for(const r of rows)this.releaseDelete(String(r.version),client);});
     return rows.map(r=>r.version as string);
   }
 
-  releaseDelete(version:string){this.run('DELETE FROM releases WHERE version=?',version);}
+  releaseDelete(version:string,client:ReleaseClient='dsh'){this.run(`DELETE FROM ${releaseTable(client)} WHERE version=?`,version);}
 
-  releaseCountDownload(version:string){this.run('UPDATE releases SET downloads=downloads+1 WHERE version=?',version);}
+  releaseCountDownload(version:string,client:ReleaseClient='dsh'){this.run(`UPDATE ${releaseTable(client)} SET downloads=downloads+1 WHERE version=?`,version);}
 
   prune(){const now=this.now();this.transaction(()=>{
     this.run('DELETE FROM audit WHERE at<?',now-90*86400000);

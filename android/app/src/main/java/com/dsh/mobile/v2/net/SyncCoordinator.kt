@@ -106,6 +106,23 @@ internal object SyncCoordinator {
     internal const val PULSE_SUBSTITUTE_MAX_MS = 120_000L
 
     /**
+     * 控制流断开后，旧面板按「断流前在跑」续命多久（坑 85 的反向护栏）。
+     *
+     * <p>断流瞬间 `state(false)` 会收回脉搏凭据；可重连到第一条新脉搏之间有一段
+     * 真空，这段时间把一条明明还在跑的轮次画成「已中断」是误报。宽限只补这段真空：
+     * 新脉搏一到就以它为准（真 IDLE 立刻收口），到点还没有脉搏就按坑 85 判「已中断」，
+     * 绝不无限转圈。
+     */
+    internal const val DISCONNECT_GRACE_MS = 30_000L
+
+    /**
+     * 从**第一次断流**算起的绝对上限：重连可以把 30 秒窗口往后推，但不能
+     * 无限推——`recover()` 每 12 秒重开一次 socket 时，若每次 `state(true)`
+     * 都重启宽限，坑 85 的「永远运行中」就会从后门回来。
+     */
+    internal const val DISCONNECT_GRACE_MAX_MS = 120_000L
+
+    /**
      * 「一条脉搏都没收到」那条判死分支的宽限时长——**坑 54 的根修**。
      *
      * <p>事故现场（2026-10-30 本机实测）：`ChatSyncActor.recover()` 把 `lastPulseAt`
@@ -217,6 +234,34 @@ internal object SyncCoordinator {
             now - lastDataAt < PULSE_DEAD_MS &&
             sincePulse < PULSE_SUBSTITUTE_MAX_MS
         return !substitute
+    }
+
+    /**
+     * 断流真空期里「在跑」的判据：**真脉搏优先**，宽限只补「断开→重连→新脉搏」这段。
+     *
+     * <p>坑 85 要求断流即收回凭据，否则手机会把昨天那条没打 `turn/end` 的轮次
+     * 永远画成「运行中」。但一刀切又会在每次 socket 重连的几秒里把正在跑的轮次
+     * 误标成「已中断」（2026-11-12 用户反馈「折叠栏总是出现已经中断」）。所以这里
+     * 只给断流前确实在跑的会话一段有限宽限：新脉搏一到立刻以它为准，到点还没有
+     * 脉搏就仍按坑 85 收口。重连能把 30 秒窗口往后推，但绝对上限见
+     * [DISCONNECT_GRACE_MAX_MS]，反复 `recover()` 不许把宽限续成无限。
+     */
+    internal fun hostRunningAfterDisconnect(
+        now: Long,
+        disconnectedAt: Long,
+        reconnectedAt: Long,
+        wasRunning: Boolean,
+        pulseHostState: String?,
+        graceMs: Long = DISCONNECT_GRACE_MS,
+    ): Boolean {
+        // 真脉搏比宽限硬：插件明确说 IDLE 就立刻收口，别拿宽限把它盖回去。
+        if (pulseHostState != null) return pulseHostState != "IDLE"
+        if (!wasRunning || disconnectedAt <= 0) return false
+        // 重连把宽限起点推后：真空期算的是「这次连上之后还要等多久」；
+        // 但无论重连多少次，都不能越过第一次断流起的绝对上限（坑 85）。
+        val since = now - maxOf(disconnectedAt, reconnectedAt)
+        if (since < 0 || since >= graceMs) return false
+        return now - disconnectedAt < DISCONNECT_GRACE_MAX_MS
     }
 
     /**

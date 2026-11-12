@@ -1,14 +1,14 @@
 # dsh-mobile-sh 接手文档
 
-> 更新于 2026-11-11 · 本轮：项目改名与首次公开提交。状态、卡点与下一步见下；架构、契约与验收见 `docs/PRD.md`。
+> 更新于 2026-11-12 · 本轮：修复「已中断」误报（抽屉同源 / 断流宽限 / 插件脉搏）。状态、卡点与下一步见下；架构、契约与验收见 `docs/PRD.md`。
 
 ## 一、现在
 
-**状态**：手机 0.2.60/vc61 已发（子智能体胶囊按「明确在跑」判定）。三端 v2 已上线：中继裸 IP 部署 + 内建 APK 托管，插件 SQLite outbox + 控制流，手机 Room + `Projector`。TS 262 / Android 539 全绿；发布前隐私审计已收口（个人域名、凭据、设备标识、agent 日志与基线截图均已清）。
+**状态**：手机 0.2.61/vc62 本轮发版（含「已中断」误报修复；子智能体胶囊按「明确在跑」判定）。三端 v2 已上线：中继裸 IP 部署 + 内建 APK 托管，插件 SQLite outbox + 控制流，手机 Room + `Projector`。TS 264 / Android 543 全绿；本轮修「已中断」误报（坑 95），待真机复验；发布前隐私审计已收口（个人域名、凭据、设备标识、agent 日志与基线截图均已清）。
 
 **卡点**：①真机「长按删除不能删」本地复现不出，待确认 APK 版本与实际现象；②同一轮冒两段折叠行，旁路在 `Projector.applyStreaming` 的 overlay；③子智能体活体只在假宿主桩上验过，未在真链路派子代理；④真机逐项验收剩余条目。
 
-**下一步**：修两段折叠行；真机验子代理胶囊与长按删除；清理旧私有库中已合并的分支（需用户点头）。
+**下一步**：修两段折叠行；真机复验「已中断」修复；真机验子代理胶囊与长按删除；清理旧私有库中已合并的分支（需用户点头）。
 
 ## 二、环境与入口
 
@@ -16,12 +16,12 @@
 |---|---|
 | 工作目录 | `~/WebstormProjects/dsh-mobile-sh`（main；git 走 Clash 代理 `127.0.0.1:7890`，直连 GitHub 报 `LibreSSL SSL_ERROR_SYSCALL`） |
 | Node | macOS 默认 v22 会让 `npm run check` 报 `argon2` 导出缺失；先 `export PATH="$HOME/.nvm/versions/node/v24.13.0/bin:$PATH"` |
-| TS 门禁 | 项目根 `npm run check` ＝ tsc + 命名门禁 + 262 项测试 + esbuild 打包；全新 clone 先 `npm run build`（`tests/plugin-ui.test.ts` 要读 `dist/client.js`） |
+| TS 门禁 | 项目根 `npm run check` ＝ tsc + 命名门禁 + 264 项测试 + esbuild 打包；全新 clone 先 `npm run build`（`tests/plugin-ui.test.ts` 要读 `dist/client.js`） |
 | Android 门禁 | `cd android && ./gradlew :app:testDebugUnitTest :app:assembleDebug`；JDK 17 + `ANDROID_HOME`（系统 JDK 26 会让 Gradle 8.13 报 major version 70）；`set -o pipefail`（`| tail` 吞退出码） |
 | 签名 / 发版 | release 用服务器 `dsh-release.keystore`，`ANDROID_KEYSTORE` 四件套全走环境变量，指纹用 `apksigner verify --print-certs` 核对；`bash scripts/release-android.sh <ver> "说明"`，目标与清单地址由 `RELAY_URL` / `RELEASE_SSH_HOST` / `RELEASE_BASE_URL` / `-PreleaseFallbackManifestUrl` 注入 |
 | 本机插件 | `~/.dsh/profiles/desktop/node_modules/dsh-mobile-sh/dist/`；同版本号别用 `dsh plugin add`（不重新解包，坑 31），直接覆盖 5 个 dist 文件并看热重载日志；装的是哪版看 `dist/build-info.json` |
 | 调试 | 移动端一律 mobilewright（`~/.agents/mcp/mobilewright/mobilewright-cli`；模拟器 id `test_emulator`、adb `emulator-5554`）；别与 `uiautomator dump` 同用（抢 UiAutomationService，坑 59） |
-| 文档入口 | `README.md`（项目说明 / 用法 / 安装 / MIT）· `docs/PRD.md`（需求 / 契约 / 验收）· `AGENTS.md`（功能 / 代码地图 / 最近坑）· `docs/pitfalls.md`（坑全表 1~94）· `docs/RELAY-DEPLOY.md`（部署）· `docs/plugin-ui.md`（插件面板）· `LICENSE`（MIT 协议全文）· `HANDOFF.md`（本文） |
+| 文档入口 | `README.md`（项目说明 / 用法 / 安装 / MIT）· `docs/PRD.md`（需求 / 契约 / 验收）· `AGENTS.md`（功能 / 代码地图 / 最近坑）· `docs/pitfalls.md`（坑全表 1~95）· `docs/RELAY-DEPLOY.md`（部署）· `docs/plugin-ui.md`（插件面板）· `LICENSE`（MIT 协议全文）· `HANDOFF.md`（本文） |
 
 环境与命令全文见 `docs/RELAY-DEPLOY.md` 及 `AGENTS.md`「五、构建 / 测试 / 发布」「六、调试」。
 
@@ -35,7 +35,7 @@
 - [ ] **真机逐项验收**：附件拍照 / 文件、插件 UI 真机点选等剩余条目。
 - [ ] **a2a-az 模型参数**（仓库外）：本机 `~/.dsh/profiles/desktop/cordis.patch.yml` 的 `a2a-az` 约 48 个模型补 `input` 与 `reasoningEfforts`，数据源 model.dev，其它参数不动。
 
-里程碑（已完成）：三端 v2 重构上线（中继 `/v2/sync` + 插件 outbox / 控制流 + 手机 Room / `Projector`）；v1 面 410 下线；中继 Docker 化与内建 APK 托管；裸 IP 部署；0.2.60 三颗胶囊；发布前隐私审计。
+里程碑（已完成）：三端 v2 重构上线（中继 `/v2/sync` + 插件 outbox / 控制流 + 手机 Room / `Projector`）；v1 面 410 下线；中继 Docker 化与内建 APK 托管；裸 IP 部署；0.2.60 三颗胶囊；发布前隐私审计；2026-11-12 修复「已中断」误报（抽屉同源 / 断流宽限 / 插件脉搏，坑 95）。
 
 ## 四、细节在哪
 
@@ -45,7 +45,7 @@
 | MIT 协议全文 | LICENSE | 全文 |
 | 产品需求 + 架构契约 + 验收标准 | docs/PRD.md | 全文 |
 | 接手入口：功能 / 业务链路 / 代码地图 | AGENTS.md | 全文 |
-| 踩过的坑全表（1~94，过时条目压成一行注记） | docs/pitfalls.md | 全文 |
+| 踩过的坑全表（1~95，过时条目压成一行注记） | docs/pitfalls.md | 全文 |
 | 中继部署（Docker / 裸 IP / APK 托管） | docs/RELAY-DEPLOY.md | 全文 |
 | 插件 UI（需求边界 / 验收 / 取舍） | docs/plugin-ui.md | 全文 |
 | 命名清单（唯一改动点） | packages/core/src/naming.ts | 全文 |
@@ -91,7 +91,7 @@
 | 设计令牌 | android/app/src/main/java/com/dsh/mobile/v2/ui/Theme.kt | 全文 |
 | 待答卡片账本（去重 / 回放 / 可重来） | android/app/src/main/java/com/dsh/mobile/v2/ui/InteractionLedger.kt | 全文 |
 | App 内更新安装（PackageInstaller 会话） | android/app/src/main/java/com/dsh/mobile/v2/ApkInstaller.kt | 全文 |
-| Android JVM 单测（539 项） | android/app/src/test/java/com/dsh/mobile/v2/ | 全文 |
+| Android JVM 单测（543 项） | android/app/src/test/java/com/dsh/mobile/v2/ | 全文 |
 | v2 测试基线（插件） | tests/pipeline-v2.test.ts | 全文 |
 | v2 测试基线（控制流 + 端到端） | tests/control-v2.test.ts | 全文 |
 | 事件过滤回归（未来事件原样透传） | tests/filter.test.ts | 全文 |

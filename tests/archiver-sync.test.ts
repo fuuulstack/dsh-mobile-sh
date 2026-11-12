@@ -157,6 +157,27 @@ async function until(check: () => boolean, ms: number, what: string) {
 }
 
 // ---------------------------------------------------------------
+// 宿主列表里的 running 必须出现在脉搏里：插件重启后不许谎报 IDLE（坑 85 反向）
+// ---------------------------------------------------------------
+test('session list running flag reaches the pulse even with no timeline records', { timeout: 15000 }, async t => {
+  const relay = relaySink((_batch, reply) => reply());
+  relay.server.listen(0, '127.0.0.1'); await once(relay.server, 'listening');
+  t.after(() => relay.close());
+
+  const host = fakeHost(
+    () => {},
+    () => ({ sessionId: 'sess-1', title: 'T', updatedAt: 1 }),
+    () => [{ sessionId: 'sess-1', title: 'T', updatedAt: 1, running: true }],
+  );
+  host.server.listen(0, '127.0.0.1'); await once(host.server, 'listening');
+  t.after(() => host.close());
+
+  const { hub, collector } = pipeline(t, host, (relay.server.address() as any).port);
+  collector.start();
+  await until(() => hub.pulse('sess-1').hostState !== 'IDLE', 5000, '脉搏报出宿主的运行态');
+});
+
+// ---------------------------------------------------------------
 // B-1：在途批次未确认时，快照重投同一个 seq 不得再排一次队
 // ---------------------------------------------------------------
 test('a snapshot replayed while a push is in flight does not duplicate records', { timeout: 20000 }, async t => {

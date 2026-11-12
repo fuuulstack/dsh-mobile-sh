@@ -645,6 +645,8 @@ fun ChatScreen(
             if (live !== lastPanel[0]) SideEffect { lastPanel[0] = live }
             ProcessTimelineSheet(
                 message = live,
+                // 与折叠行的 `stranded` 同源：拿不到活体证据时抽屉里也不许转圈。
+                stranded = live.running && !state.running,
                 onDismiss = {
                     openProcess = null
                     lastPanel[0] = null
@@ -1953,7 +1955,11 @@ private fun stepSheetHeight(): androidx.compose.ui.unit.Dp {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ProcessTimelineSheet(message: Model.Message, onDismiss: () -> Unit) {
+private fun ProcessTimelineSheet(
+    message: Model.Message,
+    stranded: Boolean,
+    onDismiss: () -> Unit,
+) {
     // 二级抽屉记的是**步骤号**而不是下标，也不是 Model.Step 对象：
     // - 存对象：对象是打开那一刻的快照，思考详情就冻住了（「展开后也要流式加载」）；
     // - 存下标：合并面板/重新快照后同一下标指向另一条，越界就直接消失
@@ -2023,7 +2029,7 @@ private fun ProcessTimelineSheet(message: Model.Message, onDismiss: () -> Unit) 
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         // 正在跑的那一步 = 最后一条还没落定的步骤：转菊花而不是打对勾。
-                        val liveIndex = if (message.running) message.steps.lastIndex else -1
+                        val liveIndex = if (timelineLive(message.running, stranded)) message.steps.lastIndex else -1
                         val lastStepIndex = message.steps.lastIndex
                         message.steps.forEachIndexed { index, step ->
                             val live = index == liveIndex
@@ -2041,7 +2047,7 @@ private fun ProcessTimelineSheet(message: Model.Message, onDismiss: () -> Unit) 
                                     ) {
                                         MarkdownText(
                                             // 旁白也在流式长：整轮没跑完时逐字吐，落定后整段给。
-                                            source = rememberTypewriterText(step.text, message.running),
+                                            source = rememberTypewriterText(step.text, timelineLive(message.running, stranded)),
                                             modifier = Modifier.padding(start = 24.dp, top = 6.dp, bottom = 6.dp),
                                         )
                                     }
@@ -2067,7 +2073,7 @@ private fun ProcessTimelineSheet(message: Model.Message, onDismiss: () -> Unit) 
                                         .takeIf { it in message.actions.indices }
                                         ?.let { message.actions[it] }
                                     if (action != null) {
-                                        val busy = live || action.status == Model.ToolAction.Status.RUNNING
+                                        val busy = (live || action.status == Model.ToolAction.Status.RUNNING) && !stranded
                                         TimelineRow(
                                             icon = if (action.skill) {
                                                 R.drawable.ic_lucide_package
@@ -2127,7 +2133,7 @@ private fun ProcessTimelineSheet(message: Model.Message, onDismiss: () -> Unit) 
         }
     }
     detailStep?.let { step ->
-        StepDetailSheet(step = step, message = message, onDismiss = {
+        StepDetailSheet(step = step, message = message, stranded = stranded, onDismiss = {
             detailStepId = ""
             detailIndex = -1
         })
@@ -2281,7 +2287,7 @@ private fun TimelineRow(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StepDetailSheet(step: Model.Step, message: Model.Message, onDismiss: () -> Unit) {
+private fun StepDetailSheet(step: Model.Step, message: Model.Message, stranded: Boolean, onDismiss: () -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val action = step.actionIndex
         .takeIf { it in message.actions.indices }
@@ -2331,7 +2337,7 @@ private fun StepDetailSheet(step: Model.Step, message: Model.Message, onDismiss:
                         // 这一轮还在跑 → 思考正文正在往下长，同样走打字机；
                         // 落定的思考原样整段渲染。
                         MarkdownText(
-                            source = rememberTypewriterText(step.text, message.running),
+                            source = rememberTypewriterText(step.text, timelineLive(message.running, stranded)),
                         )
                     }
                 } else if (action != null) {

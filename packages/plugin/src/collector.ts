@@ -135,6 +135,14 @@ export class Collector {
       const slim = items
         .filter(item => !isInternalSession(item))
         .map(item => slimSession(item, running));
+      // 插件刚重启 / 热重载时 tails 是空的，`pulse()` 会一律报 IDLE —— 宿主明明
+      // 还在跑，手机却把那条没打 turn/end 的轮次画成「已中断」。把宿主列表里的
+      // running 补成脉搏的运行态；`noteRunning` 只补 true，不覆盖实时事件（坑 85）。
+      for (const item of slim) {
+        const id = (item as { sessionId?: unknown }).sessionId;
+        if (typeof id !== 'string' || id.length > 128) continue;
+        if (running.get(id) === true) this.options.hub.noteRunning(id, true);
+      }
       for (const item of slim) {
         const id = (item as { sessionId?: unknown }).sessionId;
         if (typeof id !== 'string' || id.length > 128) continue;

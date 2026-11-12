@@ -15,8 +15,8 @@ android {
         applicationId providers.gradleProperty('v2.applicationId').get()
         minSdk 26
         targetSdk 35
-        versionCode 61
-        versionName '0.2.60'
+        versionCode 62
+        versionName '0.2.61'
         // 应用显示名由 gradle.properties 提供（当前为 BBW）
         resValue 'string', 'appName', providers.gradleProperty('v2.appName').get()
         // build_hash：三端握手时互报。版本号相同但内容不同（见 AGENTS.md §31 的

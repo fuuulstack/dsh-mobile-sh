@@ -308,10 +308,14 @@ export class SessionHub {
     return record;
   }
 
-  /** Marks a turn as started/ended without a record — used when the host reports
-   *  status through session metadata rather than a timeline event. */
+  /** Marks a turn as started without a record — used when the host reports status
+   *  through session metadata rather than a timeline event.
+   *
+   *  Only ever raises the flag: `session/list` is a 60-second snapshot and must not
+   *  clear a `running` that `USER_INPUT` / `noteDelta` set a moment ago. Ending a
+   *  turn is `TURN_END`'s job in `ingest()` (see pitfall 85). */
   noteRunning(sessionId: string, running: boolean): void {
-    this.tail(sessionId).running = running;
+    if (running) this.tail(sessionId).running = true;
   }
 
   latestSeq(sessionId: string): number {

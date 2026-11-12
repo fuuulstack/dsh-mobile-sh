@@ -570,6 +570,13 @@ class UiLogicTest {
     }
 
     @Test
+    fun timelineDrawerSpinnersFollowTheFoldedRowVerdict() {
+        assertTrue(timelineLive(messageRunning = true, stranded = false))
+        assertFalse("折叠行判「已中断」时抽屉不许再转圈/吐字", timelineLive(messageRunning = true, stranded = true))
+        assertFalse(timelineLive(messageRunning = false, stranded = false))
+    }
+
+    @Test
     fun foldSummaryNeverCountsThinking() {
         // 思考被工具打断又重来也不报次数：用户 2026-10-28 明确不要「深度思考 ×N」
         // 这类计数，正在想什么由折叠行下面的流式预览说明。

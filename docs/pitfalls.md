@@ -2,7 +2,7 @@
 
 `AGENTS.md` 的指令预算是 65536 字节，放不下全表（2026-11-02 曾把最新一条直接截断）。
 所以全表在这里，`AGENTS.md` 只留「指针 + 最近几条」。**新坑先写这里，再在 `AGENTS.md` 里加一行指针或短条目。**
-**编号 1~94 保持稳定**：已过时的条目压成一行「已过时」注记而不删号，因为源码注释里仍有 `坑N` 引用。
+**编号 1~95 保持稳定**：已过时的条目压成一行「已过时」注记而不删号，因为源码注释里仍有 `坑N` 引用。
 
 ## 全表
 
@@ -348,3 +348,10 @@
     - 第二个坑（这次把胶囊直接弄没了）：`ChatViewModel.refreshProjections` 里 `subagents = value.copy(…)` 会把「响应里压根没有这个键」读成空目录，把会话列表那份（带活体标记的）抹掉。正解是**保留列表那一份**（`subagents = local.subagents`），并且**单一来源** —— `RelayGateway.sessionProjections` 不再读 catalog，否则两条路各写一份、谁后到谁赢。
     - 验证手法（本地能跑，因为假宿主就是一个真插件）：给它加 `SMOKE_SUBAGENT_LIVE` 开关，`/api/session/list` 里放两条 catalog 条目 + 对应的两条子代理会话行（`running` 跟着开关走）。解密中继库的 `session_meta.item` 能直接看到插件有没有把 `running` 盖上；手机侧 `running:true` ⇒ `后台任务 [471,1454]` + `子智能体 [571,1454]`、弹层「共 1 个在跑 / 审查投影器」（已结束那条被过滤）；`SMOKE_SUBAGENT_LIVE=0` ⇒ 子智能体胶囊消失、只剩 `后台任务 [521,1454]`（整行重新居中）。
     - 推广：**「列出子项」与「子项此刻在不在」往往不在同一个投影里。** 遇到这种缺口，先去找「子项自己那条最原始的记录」（这里是会话行的 `running`），并且确认它在链路上**任何按身份过滤之前**都还在。
+
+95. **「已中断」也会误报：坑 85 的护栏只管「收回凭据」，没管「重连真空期」**（2026-11-12 用户报「折叠栏总是出现已经中断，点开以后明明还有命令或者思考正在进行」）。
+    - 现象两面：折叠行写「已处理 4 个操作 · 已中断」，点开抽屉最后一步还在转菊花/逐字吐字。判据不同源 —— 折叠行看 `stranded = message.running && !sessionRunning`（活体脉搏），抽屉的 `liveIndex` / `rememberTypewriterText(step.text, message.running)` 只看记录里的历史态，二级抽屉的思考正文也一样。
+    - 三条根因叠在一起：①`ChatSyncActor.state(connected=false)` 按坑 85 立刻清 `lastPulse/hostRunning`，而 `RelayApiV2` 的 onOpen `connected=true` 分支直接 return，运行态只能等下一条脉搏重建；插件首脉可晚到几十秒，这段真空必然判 stranded。②插件重启/热重载后 `hub.tails` 为空，`pulse()` 对无 tail 的会话直接返回 `hostState:'IDLE'`，没问宿主 `/api/session/list` 的 `running` —— 宿主明明在跑，脉搏却报空闲。③抽屉压根没接 `stranded`。
+    - 修法三条，都带上限：①抽纯函数 `timelineLive(messageRunning, stranded) = messageRunning && !stranded`，一级抽屉（`liveIndex`/打字机/工具行 `busy`）与二级抽屉思考正文全走它，`action.status == RUNNING` 也要被 `!stranded` 挡住；②`SyncCoordinator.hostRunningAfterDisconnect(...)` 给「断开→重连→新脉搏」真空 30 秒宽限，但**真脉搏优先**（新 IDLE 立刻收口），且 `DISCONNECT_GRACE_MAX_MS = 120s` 从第一次断流起算绝对上限 —— `recover()` 每 12 秒重开一次 socket，若每次 `state(true)` 都重启 30 秒窗口，坑 85 的「永远运行中」就从后门回来了；③`Collector.refreshSessions()` 把 `runningSessions(items)` 里的 `running=true` 用 `hub.noteRunning(id, true)` 补进脉搏，而 `noteRunning` 改成**只补 true**（60 秒列表快照是旧数据，不许反过来清掉 `USER_INPUT`/`noteDelta` 刚置起来的实时态；结束仍由 `TURN_END` 在 `ingest()` 里置 false）。
+    - 护栏：`SyncCoordinatorTest` 的 `a disconnect grace defers the interrupted verdict without overriding a real pulse`、`ChatSyncActorTest` 的两条假时钟用例、`UiLogicTest.timelineDrawerSpinnersFollowTheFoldedRowVerdict`、`tests/pipeline-v2.test.ts` 的无 tail 用例、`tests/archiver-sync.test.ts` 的端到端用例。
+    - 推广：**「没有证据别画在忙」与「证据只是暂时断了几秒」是两件事。** 给护栏加宽限时必须同时写死两样东西 —— 真证据一到就作废、以及从第一次断流算起的绝对上限；少一样就会把刚堵住的 bug 从另一头放回来。

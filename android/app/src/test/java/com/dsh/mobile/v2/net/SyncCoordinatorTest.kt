@@ -22,6 +22,46 @@ import org.junit.Test
 class SyncCoordinatorTest {
 
     // ============================================================
+    // 断流宽限：只补真空期，真脉搏优先
+    // ============================================================
+
+    @Test
+    fun `a disconnect grace defers the interrupted verdict without overriding a real pulse`() {
+        val d = 10_000L
+        // 真脉搏优先：明确 IDLE / STREAMING 都不看宽限。
+        assertFalse(SyncCoordinator.hostRunningAfterDisconnect(d + 1_000, d, d, true, "IDLE"))
+        assertTrue(SyncCoordinator.hostRunningAfterDisconnect(d + 1_000, d, d, true, "STREAMING"))
+        // 断流前空闲 / 压根没断过流：不许凭空造「在跑」。
+        assertFalse(SyncCoordinator.hostRunningAfterDisconnect(d + 1_000, d, d, false, null))
+        assertFalse(SyncCoordinator.hostRunningAfterDisconnect(d + 1_000, 0, 0, true, null))
+        // 宽限内续命、到点收口；重连把起点推后。
+        assertTrue(SyncCoordinator.hostRunningAfterDisconnect(d + 5_000, d, 0, true, null))
+        assertFalse(
+            SyncCoordinator.hostRunningAfterDisconnect(
+                d + SyncCoordinator.DISCONNECT_GRACE_MS, d, 0, true, null,
+            ),
+        )
+        assertTrue(
+            "重连后宽限从重连那刻重新算",
+            SyncCoordinator.hostRunningAfterDisconnect(
+                d + SyncCoordinator.DISCONNECT_GRACE_MS, d, d + 20_000, true, null,
+            ),
+        )
+        // 但反复重连不能把宽限续成无限：绝对上限从第一次断流算起。
+        assertTrue(
+            SyncCoordinator.hostRunningAfterDisconnect(
+                d + SyncCoordinator.DISCONNECT_GRACE_MAX_MS - 1_000, d, d + 119_000, true, null,
+            ),
+        )
+        assertFalse(
+            "反复重连也不能越过第一次断流起的绝对上限",
+            SyncCoordinator.hostRunningAfterDisconnect(
+                d + SyncCoordinator.DISCONNECT_GRACE_MAX_MS + 1_000, d, d + 121_000, true, null,
+            ),
+        )
+    }
+
+    // ============================================================
     // 单飞（§invariant 6）
     // ============================================================
 

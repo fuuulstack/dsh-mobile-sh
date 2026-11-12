@@ -406,6 +406,21 @@ test('pulse distinguishes silent thinking from streaming and keeps reporting', (
   outbox.close();
 });
 
+test('a session reported running by the host is not idle right after a plugin restart', () => {
+  // 插件重启后 tails 是空的；60 秒一次的 session/list 必须能把运行态补回来，
+  // 否则手机会把没打 turn/end 的轮次画成「已中断」（2026-11-12 反馈）。
+  let clock = 100_000;
+  const outbox = new ArchiveOutbox({ path: null });
+  const hub = new SessionHub({ outbox, now: () => clock });
+  assert.equal(hub.pulse('s1').hostState, 'IDLE', '还没接到宿主列表时空闲');
+  hub.noteRunning('s1', true);
+  assert.notEqual(hub.pulse('s1').hostState, 'IDLE', '宿主说在跑就不能报空闲');
+  // 60 秒快照不许反过来清掉刚由 USER_INPUT / noteDelta 置起来的实时态。
+  hub.noteRunning('s1', false);
+  assert.notEqual(hub.pulse('s1').hostState, 'IDLE', '旧的 false 快照不能盖掉实时运行态');
+  outbox.close();
+});
+
 // ---------------------------------------------------------------------------
 // 实时思考：assistant-stream 帧不落盘、不进时间线，但手机必须看得见在长
 // ---------------------------------------------------------------------------

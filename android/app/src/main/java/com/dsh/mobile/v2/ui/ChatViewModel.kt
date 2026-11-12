@@ -1750,6 +1750,16 @@ fun foldSummary(
 fun foldLive(message: Model.Message, sessionRunning: Boolean): Boolean =
     message.running || (sessionRunning && !message.footnote)
 
+/**
+ * 抽屉里的「还在进行」必须跟折叠行同源。
+ *
+ * `message.running` 是归档记录里的历史状态（这一轮没收到 `turn/end`），`stranded`
+ * 是「记录开着、却拿不到活体证据」。以前抽屉只看前者，于是外面写「已中断」、
+ * 点开里面还在转菊花/逐字吐字，两处判据自相矛盾（2026-11-12 反馈）。
+ */
+fun timelineLive(messageRunning: Boolean, stranded: Boolean): Boolean =
+    messageRunning && !stranded
+
 
 /**
  * 折叠行下面那行「活思考」的正文：取这一段里**最后一段**非空思考。

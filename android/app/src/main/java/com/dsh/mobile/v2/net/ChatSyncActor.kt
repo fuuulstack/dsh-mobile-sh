@@ -386,6 +386,17 @@ class ChatSyncActor(
     @Volatile
     private var halfDeadDeclared = false
 
+    /**
+     * 断流真空期的三个量：断流时刻、重连时刻、断流前是不是真的在跑。
+     * 见 [SyncCoordinator.hostRunningAfterDisconnect]：只给有限宽限，不无限转圈。
+     */
+    @Volatile
+    private var disconnectedAt: Long = 0
+    @Volatile
+    private var reconnectedAt: Long = 0
+    @Volatile
+    private var runningBeforeDisconnect: Boolean = false
+
     @Volatile
     private var inFlight = false
     @Volatile
@@ -436,6 +447,9 @@ class ChatSyncActor(
         hasEarlier = records.isNotEmpty() &&
             store.earlier(sessionId, records.first().seq, 1).isNotEmpty()
         armedAt = clock()
+        disconnectedAt = 0
+        reconnectedAt = 0
+        runningBeforeDisconnect = false
         // 每个 actor 抢占控制流都要留痕：两个 actor 抢同一条 socket 时，
         // 「谁在什么时刻把别人的连接关了」只有这张表说得清（见 actorTag 的说明）。
         Diag.log("control", "actor start tag=$actorTag from=${watermarks.localAcked.value}")
@@ -785,6 +799,10 @@ class ChatSyncActor(
             // 变成每 12 秒一次的静默死循环。
             halfDeadDeclared = false
             recoveries = 0
+            // 新脉搏来了，宽限期结束：后面一律以这条脉搏为准。
+            disconnectedAt = 0
+            reconnectedAt = 0
+            runningBeforeDisconnect = false
             val act = SyncCoordinator.onPulse(
                 localAcked = watermarks.localAcked.value,
                 pulseLatestSeq = pulse.latestSeq,
@@ -815,11 +833,24 @@ class ChatSyncActor(
         }
 
         override fun state(note: String, connected: Boolean) {
-            if (connected) return
+            if (connected) {
+                // 重连只把 30 秒窗口推后；绝对上限见 SyncCoordinator.DISCONNECT_GRACE_MAX_MS，
+                // 真正收口要等一条新脉搏（见 pulse()）。
+                if (disconnectedAt > 0) reconnectedAt = clock()
+                return
+            }
             this@ChatSyncActor.note = note
             // 断流就把「在跑」的依据一起收回（2026-11-05 现场：主机昨天切走，手机这一侧
             // 还在按最后一条脉搏的 STREAMING 转圈，界面永远是「运行中」、发送钮永远是「停止」）。
             // 脉搏是唯一的活证；流没了它就不再代表任何事。
+            //
+            // 但 onFailure 与 onClosed 常常成对到达：第二次不许把断流时刻重新记成
+            // 此刻（那会让宽限永远不过期），也不许拿已被清空的 hostRunning 当「本来空闲」。
+            if (disconnectedAt <= 0) {
+                disconnectedAt = clock()
+                reconnectedAt = 0
+                runningBeforeDisconnect = lastPulse?.let { it.hostState != "IDLE" } ?: hostRunning
+            }
             lastPulse = null
             lastPulseAt = 0
             hostRunning = false
@@ -1008,7 +1039,15 @@ class ChatSyncActor(
         // 先收口超时的写操作：它不能等网络、不能挂在任何 suspend 点上，否则
         // 「命令丢了」会被永远显示成「命令在跑」。
         sweepAcks(now)
-        val running = lastPulse?.let { it.hostState != "IDLE" } ?: false
+        // 断流真空期给一条有限宽限：别一断流就把正在跑的轮次画成「已中断」；
+        // 新脉搏一到一律以它为准，宽限到期还没有脉搏就按坑 85 收口。
+        val running = SyncCoordinator.hostRunningAfterDisconnect(
+            now = now,
+            disconnectedAt = disconnectedAt,
+            reconnectedAt = reconnectedAt,
+            wasRunning = runningBeforeDisconnect,
+            pulseHostState = lastPulse?.hostState,
+        )
         hostRunning = running
         // 一条脉搏都没收到过，且已经超过判死窗口：这条控制流**无法证明自己是活的**。
         //

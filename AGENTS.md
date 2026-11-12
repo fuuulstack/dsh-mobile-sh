@@ -126,12 +126,12 @@ DSH（DeepSeek Harness）桌面端的手机遥控器。电脑上跑 DSH，装一
 
 ### 其它目录
 
-`tests/` 262 项 TS 测试 · `android/app/src/test/` 539 项 JVM 单测 · `scripts/`（`local-e2e.ts` 本地中继、`smoke-fake-host.ts` 假宿主、`release-android.sh` 发版、`docker-test.ts` 容器端到端、`build.mjs` 打包、`check-naming.mjs` 命门禁、`review/` mobilewright 驱动）· `deploy/`（`Dockerfile` + `compose.yaml` + `nginx.conf.example` + 部署说明 `README.md`）· `artifacts/`（本地联调夹具，gitignore）
+`tests/` 264 项 TS 测试 · `android/app/src/test/` 543 项 JVM 单测 · `scripts/`（`local-e2e.ts` 本地中继、`smoke-fake-host.ts` 假宿主、`release-android.sh` 发版、`docker-test.ts` 容器端到端、`build.mjs` 打包、`check-naming.mjs` 命门禁、`review/` mobilewright 驱动）· `deploy/`（`Dockerfile` + `compose.yaml` + `nginx.conf.example` + 部署说明 `README.md`）· `artifacts/`（本地联调夹具，gitignore）
 
 ## 五、构建 / 测试 / 发布
 
 ```bash
-# TS：类型检查 + 命名门禁 + 262 项测试 + esbuild 打包（包产物到 packages/*/dist/）
+# TS：类型检查 + 命名门禁 + 264 项测试 + esbuild 打包（包产物到 packages/*/dist/）
 npm run check
 
 # Android（本机 JDK 17；系统 JDK 26 会让 Gradle 8.13 报 major version 70）
@@ -143,7 +143,7 @@ cd android && ./gradlew :app:assembleRelease && cd ..
 scripts/release-android.sh 0.2.10 "本次说明"
 ```
 
-发版细节：脚本把 APK 传到 `static-host:/var/www/dsh-mobile/` 并写 `version.json`（先传包、后写清单）。App 轮询 `https://downloads.example.test/api/ybs/downloads/version.json`。
+发版细节：脚本支持 `--relay <url>` 走中继内建托管（推荐，凭据取 `~/.dsh/.credentials.yaml` 或 `RELAY_HOST_ID` / `RELAY_HOST_TOKEN` 环境变量），也可回落 `static-host:/var/www/dsh-mobile/`；先传包、后写清单。App 优先轮询当前中继的 `/api/dsh-mobile-sh-apk/downloads/version.json`，回落地址由 `-PreleaseFallbackManifestUrl` 注入。
 
 **签名（必须看）**：线上历史包一律由服务器那把 `dsh-release.keystore` 签（`static-host:/path/to/release-keys/`，root 600；口令 `YOUR_PASSWORD`、别名 `YOUR_KEY_ALIAS`、SHA-256 `<线上签名证书指纹>`）。**未设 `ANDROID_KEYSTORE` 时 release 回落本机 `~/.android/debug.keystore`，那是另一把（`<本机调试证书指纹>`），签出来装不上、报签名冲突**——2026-10-28 发 0.2.15 就这么踩过一次。发版前：
 
@@ -195,7 +195,7 @@ $M -d <id> logs --filter tag=DSH --limit 200
 
 ## 七、踩过的坑
 
-**全表在 `docs/pitfalls.md`**（1~94 条，按主题分了「构建与环境 / 网络与更新 / 数据与渲染 / 测试工具 / UI 细节 / 网络与隧道 / 配对与设备身份 / 插件运行环境 / 限流 / 排队消息 / v2 重构」等小节）。
+**全表在 `docs/pitfalls.md`**（1~95 条，按主题分了「构建与环境 / 网络与更新 / 数据与渲染 / 测试工具 / UI 细节 / 网络与隧道 / 配对与设备身份 / 插件运行环境 / 限流 / 排队消息 / v2 重构」等小节）。
 分家的原因：这份清单本身就 60 多 KB，而 `AGENTS.md` 的指令预算是 65536 字节——2026-11-02 加第 57 条时把文件顶爆，DSH 直接把尾部截掉，等于新坑白写。**新坑一律先写进 `docs/pitfalls.md`**，`AGENTS.md` 这里只留最近几条。
 
 下面是最近几条（最容易被正在改的东西撞上）：
@@ -231,3 +231,5 @@ $M -d <id> logs --filter tag=DSH --limit 200
 72. **内存投影窗口被「重读尾部」一把换掉，用户翻出来的历史就随下方输出一起蒸发**。`ChatSyncActor` 的 `records` 是内存窗口，`loadEarlier()` 并进来的前部，被每次落盘末尾那句 `records = store.tail(...)` 换回「最后 200 条」⇒ 用户看历史、对面还在打字，翻出来的内容瞬间消失。**不能靠过滤内存修**（中间那段可能落进了 Room 却从没进过内存，过滤会让时间线凭空多洞），数据库是权威：`ChatStore.between(sinceSeq, beforeSeq)` 连续读回再拼新尾部（`refreshTail()`）。代价是窗口可能长于 `TAIL_LIMIT`，上限由 `PER_SESSION_LIMIT=2000` 兜住；`project()` 实测 200 条 1.01ms / 1000 条 1.70ms / 2000 条 3.27ms（JVM）⇒ 一开始就读 2000 条不值得，懒加载窗口 + 刷新时连续读回才对。
 
 74. **`LazyColumn` 迭代的是 `mergeTurnPanels` 之后的 `rows`，不是 `state.messages`——任何拿 `messages.size` 算列表下标的算式都是错的，而且错得看不出来**。`itemsIndexed(rows, key = …)` 用的是合并后列表，`tailItemIndex(state)` 却用 `state.messages.size`：一轮 4 块相邻面板 + 1 条提问时 `messages=5`、`rows=2`，旧算式给出 4，列表最后一项是 1（探针实测 `PROBE messages=5 rows=2 tailItemIndex=4 lastRendered=1`）。**线上没炸是因为 `scrollToItem` 对越界下标会夹到末项**——但 `itemHeightOf(4)` 查不到可见项恒返 0，`tailScrollOffset(0)` 退回 `1_000_000` 哨兵值，「盖过末项高度」退化成「赌一个足够大的数」。修法：`tailItemIndex(state, rowCount)` 显式吃第二参数、四处调用点全传 `rows.size`，**刻意不给默认值**（默认值等于让每个新调用点默默踩同一个坑）。细节见 `docs/pitfalls.md` 第 74 条。
+
+95. **「已中断」也会误报：坑 85 的护栏缺一段「重连真空期」**（2026-11-12，用户报折叠行总写「已中断」、抽屉里却还在转）。折叠行看活体脉搏 `sessionRunning`，抽屉只看历史 `message.running`，两处不同源；断流即清凭据后新脉搏还没到，或插件重启后 `hub.pulse()` 对无 tail 的会话谎报 `IDLE`，都会把真在跑的一轮判死。**修法**：①抽屉（含二级抽屉）统一走 `timelineLive(messageRunning, stranded)`，spinner / 打字机 / 工具行都认 `stranded`；②`SyncCoordinator.hostRunningAfterDisconnect(...)` 给「断开→重连→新脉搏」30 秒宽限，但**真脉搏优先**，且 `DISCONNECT_GRACE_MAX_MS = 120s` 从第一次断流起算绝对上限（`recover()` 每 12 秒重开 socket 不许无限续命）；③`Collector.refreshSessions()` 用 `runningSessions(items)` 把宿主 `session/list` 的 `running=true` 补进脉搏，`noteRunning()` 只补 true，不让 60 秒旧快照反过来清掉 `USER_INPUT`/`noteDelta` 的实时态。**判据**：TS 264 / JVM 543 全绿；真机仍需复验。细节见 `docs/pitfalls.md` 第 95 条。

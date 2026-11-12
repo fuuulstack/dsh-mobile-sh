@@ -1,6 +1,6 @@
 # dsh-mobile-sh 产品需求文档（PRD）
 
-> 文档核对于 2026-11-11 · 对应版本：Android **0.2.60（vc 61）** · 新建公开库首次提交
+> 文档核对于 2026-11-12 · 对应版本：Android **0.2.61（vc 62）** · 新建公开库首次提交
 >
 > 本文档由 13 份设计与评审稿合并而成（`docs/arch-redesign-prompt.md`、`docs/current-arch-prompt.md`、
 > `docs/redesign-arch-gemini-v1.md`、`docs/redesign-arch-gemini-v2.md`、`docs/dev-fetch-kimi-v1.md`、
@@ -97,8 +97,8 @@ DSH（DeepSeek Harness）桌面端的**手机遥控器**：电脑上跑 DSH，�
 | Android 主源码 | 25 169 行 / `com/dsh/mobile/v2/` 下 52 个文件 |
 | 插件源码 | 6 052 行 / 23 个文件 |
 | 中继 | `server.ts` 约 1 400 行路由 + `store.ts` / `proxy.ts` / `changes.ts` / `sync-v2.ts` / `release.ts` / `limits.ts` |
-| 自动化测试 | TS **262**（261 pass / 1 skip）、Android **539**（全绿） |
-| 线上版本 | 0.2.60 / vc 61 |
+| 自动化测试 | TS **264**（263 pass / 1 skip）、Android **543**（全绿） |
+| 线上版本 | 0.2.61 / vc 62（本轮发版） |
 
 ---
 

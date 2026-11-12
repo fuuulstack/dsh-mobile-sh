@@ -666,6 +666,15 @@ class ChatSyncActorTest {
             feed = null
         }
 
+        /** 造一次 socket 断开；`feed` 留着，好让测试再喂新脉搏。 */
+        fun disconnect(note: String = "控制流断开") {
+            feed?.state(note, false)
+        }
+
+        fun reconnect(note: String = "已连接") {
+            feed?.state(note, true)
+        }
+
         /** 假 blob 仓库：`blobId → 正文`。缺的 key 模拟取不到（404 / 断网）。 */
         val blobs = HashMap<String, String>()
         val blobCalls = ArrayList<String>()
@@ -1151,6 +1160,61 @@ class ChatSyncActorTest {
             "24 秒时必须已经重开（实际 openControl=${transport.opens}）",
             transport.opens > opensAfterStart,
         )
+    }
+
+    @Test
+    fun `a brief control stream gap keeps a running turn alive but a fresh IDLE pulse ends it`() = runBlocking {
+        val store = FakeStore(listOf(record(1)))
+        val transport = FakeTransport()
+        var now = 1_000L
+        val actor = ChatSyncActor("s1", "h1", store, transport, clock = { now })
+        actor.start()
+        transport.pushPulse(actor, latest = 1, covered = 1, state = "STREAMING", now = now)
+        actor.tick()
+        assertTrue("断流前确实在跑", actor.hostRunning)
+
+        // socket 断开 + 重连，第一条新脉搏还没到（插件 focus 有几十秒真空）。
+        transport.disconnect()
+        transport.reconnect()
+        now += 3_000
+        actor.tick()
+        assertTrue("重连真空期不许把正在跑的轮次画成「已中断」", actor.hostRunning)
+
+        // 真脉搏一到就以它为准：宿主明确说 IDLE，宽限立刻收口。
+        transport.pushPulse(actor, latest = 1, covered = 1, state = "IDLE", now = now)
+        actor.tick()
+        assertFalse("新 IDLE 脉搏必须压过宽限", actor.hostRunning)
+    }
+
+    @Test
+    fun `a disconnect grace expires and never invents a running turn`() = runBlocking {
+        val store = FakeStore(listOf(record(1)))
+        var now = 1_000L
+
+        // 断流前本来就空闲：不许凭空造出「在跑」。
+        val idleTransport = FakeTransport()
+        val idleActor = ChatSyncActor("s1", "h1", store, idleTransport, clock = { now })
+        idleActor.start()
+        idleTransport.disconnect()
+        idleActor.tick()
+        assertFalse(idleActor.hostRunning)
+
+        // 真在跑的会话，宽限到点仍无脉搏就必须按坑 85 收口。
+        val transport = FakeTransport()
+        val actor = ChatSyncActor("s1", "h1", store, transport, clock = { now })
+        actor.start()
+        transport.pushPulse(actor, latest = 1, covered = 1, state = "STREAMING", now = now)
+        transport.disconnect()
+        transport.reconnect()
+        now += SyncCoordinator.DISCONNECT_GRACE_MS + 1
+        actor.tick()
+        assertFalse("宽限到期仍无脉搏必须判「已中断」", actor.hostRunning)
+
+        // 反复重连也不能把宽限续成无限：绝对上限从第一次断流算起。
+        now = 1_000 + SyncCoordinator.DISCONNECT_GRACE_MAX_MS + 1
+        transport.reconnect()
+        actor.tick()
+        assertFalse("反复重连不能越过第一次断流起的绝对上限", actor.hostRunning)
     }
 
     // ============================================================

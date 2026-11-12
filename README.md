@@ -4,7 +4,7 @@
 
 # dsh-mobile-sh
 
-dsh-mobile-sh 是 [DSH（DeepSeek Harness）](https://github.com/deepseek-ai) 桌面端的**手机遥控器**，同时也是一套可自托管的中继与插件方案；Android 应用显示名为 **BBW**。
+dsh-mobile-sh 是 [DSH（DeepSeek Harness）](https://github.com/deepseek-ai) 桌面端的**手机遥控器**，同时也是一套可自托管的中继与插件方案；
 
 电脑上跑 DSH，安装本仓库的主机插件；手机 App 连到自建中继，就能在手机上查看、发送和管理本机 DSH 会话。宿主的 HTTP 接口只监听 `127.0.0.1`，手机永远不直连宿主；插件主动向中继建立加密长隧道，中继只负责鉴权、转发和 14 天会话归档，不保存业务状态。
 
@@ -26,8 +26,6 @@ dsh-mobile-sh 是 [DSH（DeepSeek Harness）](https://github.com/deepseek-ai) �
 | 手机 App | DSH 插件「手机访问」 |
 | --- | --- |
 | <img src="assets/screenshot/app-screenshot.jpg" alt="手机 App 会话列表" width="280" /> | <img src="assets/screenshot/plugin-screenshot.png" alt="DSH 插件手机访问面板" width="280" /> |
-
-> 截图中的主机名称已脱敏；仓库不保存真实中继地址、口令或密钥。
 
 ---
 
@@ -169,25 +167,6 @@ TGZ="$OUT/dsh-mobile-sh-0.2.0.tgz"
 ```bash
 dsh plugin --profile desktop add "$TGZ"
 ```
-
-**同版本号重发内容时不要只依赖 `dsh plugin add`**：pnpm 可能只更新 lockfile integrity，不重新解包 `node_modules/dsh-mobile-sh`，结果是「装了新包、跑的还是旧代码」。可靠做法是先备份旧目录，再直接解包：
-
-```bash
-PROFILE_NAME=desktop   # 改成你的 profile 名
-PROFILE_DIR="${DSH_HOME:-$HOME/.dsh}/profiles/$PROFILE_NAME"
-PLUGIN_DIR="${PROFILE_DIR:?}/node_modules/dsh-mobile-sh"
-
-# 可选：把新 tgz 也覆盖到 profile 的 vendor 目录，供下次 install 使用
-# cp "$TGZ" "${PROFILE_DIR:?}/vendor/dsh-mobile-sh-0.2.0.tgz"
-
-rm -rf "${PLUGIN_DIR:?}"
-mkdir -p "${PLUGIN_DIR:?}"
-tar -xzf "$TGZ" -C "${PLUGIN_DIR:?}" --strip-components=1
-
-cat "${PLUGIN_DIR:?}/dist/build-info.json"
-```
-
-最后看 DSH 插件日志是否出现热重载完成与 `ready`；`dist/build-info.json` 里的 build hash 可以区分「同一版本号的不同构建」。更完整的排障见 `docs/pitfalls.md` 中「同版本号 tgz 不重新解包」与「npm pack 的 ctime 指纹」两条。
 
 ---
 
